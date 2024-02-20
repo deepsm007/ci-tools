@@ -41,6 +41,7 @@ func AddToManager(mgr manager.Manager,
 	buildClusterManagers map[string]manager.Manager,
 	configAgent agents.ConfigAgent,
 	resolver agents.RegistryAgent,
+	ignoreImageStreamTags sets.Set[string],
 	additionalImageStreamTags sets.Set[string],
 	additionalImageStreams sets.Set[string],
 	additionalImageStreamNamespaces sets.Set[string],
@@ -112,7 +113,7 @@ func AddToManager(mgr manager.Manager,
 		appCIClient = imagestreamtagwrapper.MustNew(mgr.GetClient(), mgr.GetCache())
 	}
 
-	objectFilter, err := testInputImageStreamTagFilterFactory(log, configAgent, appCIClient, resolver, additionalImageStreamTags, additionalImageStreams, additionalImageStreamNamespaces, r.buildClusterClients)
+	objectFilter, err := testInputImageStreamTagFilterFactory(log, configAgent, appCIClient, resolver, ignoreImageStreamTags, additionalImageStreamTags, additionalImageStreams, additionalImageStreamNamespaces, r.buildClusterClients)
 	if err != nil {
 		return fmt.Errorf("failed to get filter for ImageStreamTags: %w", err)
 	}
@@ -521,6 +522,7 @@ func testInputImageStreamTagFilterFactory(
 	ca agents.ConfigAgent,
 	client ctrlruntimeclient.Client,
 	resolver registryResolver,
+	ignoreImageStreamTags sets.Set[string],
 	additionalImageStreamTags,
 	additionalImageStreams,
 	additionalImageStreamNamespaces sets.Set[string],
@@ -532,6 +534,9 @@ func testInputImageStreamTagFilterFactory(
 	l = logrus.WithField("subcomponent", "test-input-image-stream-tag-filter")
 	buildClusterClients["app.ci"] = client
 	return func(nn types.NamespacedName) bool {
+		if ignoreImageStreamTags.Has(nn.String()) {
+			return false
+		}
 		if additionalImageStreamTags.Has(nn.String()) {
 			return true
 		}

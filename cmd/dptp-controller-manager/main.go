@@ -80,6 +80,8 @@ func (o *options) addDefaults() {
 type testImagesDistributorOptions struct {
 	additionalImageStreamTagsRaw       flagutil.Strings
 	additionalImageStreamTags          sets.Set[string]
+	ignoreImageStreamTagsRaw           flagutil.Strings
+	ignoreImageStreamTags              sets.Set[string]
 	additionalImageStreamsRaw          flagutil.Strings
 	additionalImageStreams             sets.Set[string]
 	additionalImageStreamNamespacesRaw flagutil.Strings
@@ -123,6 +125,7 @@ func newOpts() (*options, error) {
 	fs.Var(&opts.enabledControllers, "enable-controller", fmt.Sprintf("Enabled controllers. Available controllers are: %v. Can be specified multiple times. Defaults to %v", sets.List(allControllers), opts.enabledControllers.Strings()))
 	fs.Var(&opts.testImagesDistributorOptions.additionalImageStreamTagsRaw, "testImagesDistributorOptions.additional-image-stream-tag", "An imagestreamtag that will be distributed even if no test explicitly references it. It must be in namespace/name:tag format (e.G `ci/clonerefs:latest`). Can be passed multiple times.")
 	fs.Var(&opts.testImagesDistributorOptions.additionalImageStreamsRaw, "testImagesDistributorOptions.additional-image-stream", "An imagestream that will be distributed even if no test explicitly references it. It must be in namespace/name format (e.G `ci/clonerefs`). Can be passed multiple times.")
+	fs.Var(&opts.testImagesDistributorOptions.ignoreImageStreamTagsRaw, "testImagesDistributorOption.ignoreImageStreamTags", "A list of imagestreamtags that will be ignored by QCI-APPCI for images which are directly pushed to QCI.")
 	fs.Var(&opts.testImagesDistributorOptions.additionalImageStreamNamespacesRaw, "testImagesDistributorOptions.additional-image-stream-namespace", "A namespace in which imagestreams will be distributed even if no test explicitly references them (e.G `ci`). Can be passed multiple times.")
 	fs.Var(&opts.testImagesDistributorOptions.forbiddenRegistriesRaw, "testImagesDistributorOptions.forbidden-registry", "The hostname of an image registry from which there is no synchronization of its images. Can be passed multiple times.")
 	fs.Var(&opts.testImagesDistributorOptions.ignoreClusterNamesRaw, "testImagesDistributorOptions.ignore-cluster-name", "The cluster name to which there is no synchronization of test images. Can be passed multiple times.")
@@ -180,6 +183,10 @@ func newOpts() (*options, error) {
 
 	isTags, isTagErrors := completeImageStreamTags("testImagesDistributorOptions.additional-image-stream-tag", opts.testImagesDistributorOptions.additionalImageStreamTagsRaw)
 	errs = append(errs, isTagErrors...)
+	ignoreTags, ignoreTagErrors := completeImageStreamTags("testImagesDistributorOptions.ignore-image-stream-tag", opts.testImagesDistributorOptions.ignoreImageStreamTagsRaw)
+	errs = append(errs, ignoreTagErrors...)
+	opts.testImagesDistributorOptions.ignoreImageStreamTags = ignoreTags
+	isTags = isTags.Difference(ignoreTags)
 	opts.testImagesDistributorOptions.additionalImageStreamTags = isTags
 
 	imageStreams, isErrors := completeImageStream("testImagesDistributorOptions.additional-image-stream", opts.testImagesDistributorOptions.additionalImageStreamsRaw)
@@ -486,6 +493,7 @@ func main() {
 			allClustersExceptRegistryCluster,
 			ciOPConfigAgent,
 			registryConfigAgent,
+			opts.testImagesDistributorOptions.ignoreImageStreamTags,
 			opts.testImagesDistributorOptions.additionalImageStreamTags,
 			opts.testImagesDistributorOptions.additionalImageStreams,
 			opts.testImagesDistributorOptions.additionalImageStreamNamespaces,
