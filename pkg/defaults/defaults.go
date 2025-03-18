@@ -215,11 +215,12 @@ func fromConfig(
 				case resolveConfig.Integration != nil:
 					logrus.Infof("Building release %s from a snapshot of %s/%s", resolveConfig.Name, resolveConfig.Integration.Namespace, resolveConfig.Integration.Name)
 					// this is the one case where we're not importing a payload, we need to get the images and build one
-					snapshot := releasesteps.ReleaseSnapshotStep(resolveConfig.Name, *resolveConfig.Integration, podClient, jobSpec, integratedStreams[fmt.Sprintf("%s/%s", resolveConfig.Integration.Namespace, resolveConfig.Integration.Name)])
+					snapshot := releasesteps.ReleaseSnapshotStep(resolveConfig.Name, *resolveConfig.Integration, podClient, jobSpec, integratedStreams[fmt.Sprintf("%s/%s/%s", resolveConfig.Integration.Namespace, resolveConfig.Integration.Name, *resolveConfig.Integration.ReferencePolicy)])
 					assemble := releasesteps.AssembleReleaseStep(resolveConfig.Name, nodeName, &api.ReleaseTagConfiguration{
 						Namespace:          resolveConfig.Integration.Namespace,
 						Name:               resolveConfig.Integration.Name,
 						IncludeBuiltImages: resolveConfig.Integration.IncludeBuiltImages,
+						ReferencePolicy:    resolveConfig.Integration.ReferencePolicy,
 					}, config.Resources, podClient, jobSpec)
 					for _, s := range []api.Step{snapshot, assemble} {
 						buildSteps = append(buildSteps, s)
@@ -231,7 +232,13 @@ func fromConfig(
 					source = releasesteps.NewReleaseSourceFromConfig(resolveConfig, httpClient)
 				}
 			}
-			step := releasesteps.ImportReleaseStep(resolveConfig.Name, nodeName, resolveConfig.TargetName(), source, false, config.Resources, podClient, jobSpec, pullSecret, overrideCLIReleaseExtractImage)
+			var referencePolicy imagev1.TagReferencePolicyType
+			if resolveConfig.Integration != nil && resolveConfig.Integration.ReferencePolicy != nil {
+				referencePolicy = *resolveConfig.Integration.ReferencePolicy
+			} else {
+				referencePolicy = imagev1.LocalTagReferencePolicy // Provide a default value or handle appropriately
+			}
+			step := releasesteps.ImportReleaseStep(resolveConfig.Name, nodeName, resolveConfig.TargetName(), referencePolicy, source, false, config.Resources, podClient, jobSpec, pullSecret, overrideCLIReleaseExtractImage)
 			buildSteps = append(buildSteps, step)
 			addProvidesForStep(step, params)
 			continue
@@ -283,6 +290,12 @@ func fromConfig(
 			for _, name := range []string{api.InitialReleaseName, api.LatestReleaseName} {
 				var releaseStep api.Step
 				envVar := utils.ReleaseImageEnv(name)
+				var referencePolicy imagev1.TagReferencePolicyType
+				if rawStep.ReleaseImagesTagStepConfiguration.ReferencePolicy != nil {
+					referencePolicy = *rawStep.ReleaseImagesTagStepConfiguration.ReferencePolicy
+				} else {
+					referencePolicy = imagev1.LocalTagReferencePolicy // Provide a default value or handle appropriately
+				}
 				if params.HasInput(envVar) {
 					pullSpec, err := params.Get(envVar)
 					if err != nil {
@@ -291,10 +304,11 @@ func fromConfig(
 					logrus.Infof("Using explicitly provided pull-spec for release %s (%s)", name, pullSpec)
 					target := rawStep.ReleaseImagesTagStepConfiguration.TargetName(name)
 					source := releasesteps.NewReleaseSourceFromPullSpec(pullSpec)
-					releaseStep = releasesteps.ImportReleaseStep(name, nodeName, target, source, true, config.Resources, podClient, jobSpec, pullSecret, nil)
+					releaseStep = releasesteps.ImportReleaseStep(name, nodeName, target, referencePolicy, source, true, config.Resources, podClient, jobSpec, pullSecret, nil)
 				} else {
 					// for backwards compatibility, users get inclusion for free with tag_spec
 					cfg := *rawStep.ReleaseImagesTagStepConfiguration
+					cfg.ReferencePolicy = &referencePolicy
 					cfg.IncludeBuiltImages = name == api.LatestReleaseName
 					releaseStep = releasesteps.AssembleReleaseStep(name, nodeName, &cfg, config.Resources, podClient, jobSpec)
 				}
@@ -449,8 +463,9 @@ func stepForTest(
 			step = steps.ClusterClaimStep(c.As, c.ClusterClaim, hiveClient, client, jobSpec, step, censor)
 			name := c.ClusterClaim.ClaimRelease(c.As).ReleaseName
 			target := api.ReleaseConfiguration{Name: name}.TargetName()
+			referencePolicy := imagev1.LocalTagReferencePolicy
 			source := releasesteps.NewReleaseSourceFromClusterClaim(c.As, c.ClusterClaim, hiveClient)
-			ret = append(ret, releasesteps.ImportReleaseStep(name, nodeName, target, source, false, config.Resources, podClient, jobSpec, pullSecret, nil))
+			ret = append(ret, releasesteps.ImportReleaseStep(name, nodeName, target, referencePolicy, source, false, config.Resources, podClient, jobSpec, pullSecret, nil))
 		}
 		addProvidesForStep(step, params)
 		ret = append(ret, step)
