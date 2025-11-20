@@ -297,5 +297,5 @@ Systems outside OpenShift that integrate with it:
 
 - [OpenShift Official Documentation](https://docs.openshift.com/)
 - [Kubernetes Documentation](https://kubernetes.io/docs/)
-- [OpenShift Architecture Guide](ARCHITECTURE.md) - CI-Tools specific architecture
+- [CI-Tools Documentation](../README.md) - CI-Tools project documentation
 

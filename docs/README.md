@@ -13,8 +13,11 @@ Welcome to the CI-Tools documentation! This directory contains comprehensive doc
 ### Understanding the Codebase
 
 - **[Architecture](ARCHITECTURE.md)** - System architecture, component diagrams, and design patterns
-- **[OpenShift Architecture](OPENSHIFT_ARCHITECTURE.md)** - Beginner-friendly OpenShift platform architecture diagram and explanation
 - **[Codebase Walkthrough](CODEBASE_WALKTHROUGH.md)** - Detailed explanation of the repository structure and key components
+
+### OpenShift Documentation
+
+- **[OpenShift Documentation](openshift/)** - OpenShift platform architecture, guides, and reference materials
 
 ### Contributing
 
@@ -50,14 +53,16 @@ docs/
 ├── README.md                 # This file
 ├── OVERVIEW.md              # High-level overview
 ├── ARCHITECTURE.md          # System architecture and diagrams
-├── OPENSHIFT_ARCHITECTURE.md # OpenShift platform architecture diagram
 ├── CODEBASE_WALKTHROUGH.md  # Code structure and components
 ├── SETUP.md                 # Development environment setup
 ├── USAGE.md                 # Usage examples and guides
 ├── CONTRIBUTING_GUIDE.md    # Contribution guidelines
 ├── ONBOARDING.md            # New contributor guide
 ├── FAQ.md                   # Frequently asked questions
-└── SUMMARIES.md             # Technical summaries
+├── SUMMARIES.md             # Technical summaries
+└── openshift/               # OpenShift platform documentation
+    ├── README.md            # OpenShift documentation index
+    └── ARCHITECTURE.md      # OpenShift architecture diagram
 ```
 
 ## External Resources
