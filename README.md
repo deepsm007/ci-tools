@@ -43,7 +43,6 @@ CI-Tools provides a comprehensive set of utilities that work together to maintai
 For detailed documentation, see the [docs](docs/) directory:
 
 - **[Documentation Index](docs/README.md)** - Complete documentation guide
-- **[OpenShift Documentation](docs/openshift/)** - OpenShift platform architecture and guides
 - **[Contributing Guide](CONTRIBUTING.md)** - How to contribute to this project
 
 ## Getting Started
