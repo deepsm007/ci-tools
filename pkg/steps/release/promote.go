@@ -262,12 +262,15 @@ func getPromotionPod(imageMirrorTarget map[string]string, timeStr string, namesp
 		if strings.Contains(k, fmt.Sprintf("%s_prune_", timeStr)) {
 			pruneImages = append(pruneImages, fmt.Sprintf("%s=%s", imageMirrorTarget[k], k))
 		} else {
-			// Detect based on target format: quay-proxy targets should be tagged, others mirrored
-			if strings.Contains(k, "-quay:") || strings.Contains(k, "${component}") {
-				tags = append(tags, fmt.Sprintf("%s %s", imageMirrorTarget[k], k))
+			src := imageMirrorTarget[k]
+			if strings.HasPrefix(k, api.QuayOpenShiftCIRepo+":") {
+				// Images promoted into quay.io/openshift/ci always use oc image mirror (tag or digest sources).
+				images = append(images, fmt.Sprintf("%s=%s", src, k))
+			} else if strings.Contains(k, api.ComponentFormatReplacement) || !strings.Contains(src, "@sha256:") || strings.Contains(src, api.QCIAPPCIDomain) {
+				// Cluster ImageStream tags: oc tag for non-digest sources, quay-proxy imports, or ${component} templates.
+				tags = append(tags, fmt.Sprintf("%s %s", src, k))
 			} else {
-				// Default to mirroring for quay.io targets and other registries
-				images = append(images, fmt.Sprintf("%s=%s", imageMirrorTarget[k], k))
+				images = append(images, fmt.Sprintf("%s=%s", src, k))
 			}
 		}
 	}
