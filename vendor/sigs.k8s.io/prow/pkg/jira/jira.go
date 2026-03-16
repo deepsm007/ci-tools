@@ -879,7 +879,7 @@ func (jc *client) GetIssueSecurityLevel(issue *jira.Issue) (*SecurityLevel, erro
 
 func GetIssueQaContact(issue *jira.Issue) (*jira.User, error) {
 	var obj *jira.User
-	err := GetUnknownField("customfield_12316243", issue, func() interface{} {
+	err := GetUnknownField("customfield_10470", issue, func() interface{} {
 		obj = &jira.User{}
 		return obj
 	})
@@ -892,7 +892,7 @@ func (jc *client) GetIssueQaContact(issue *jira.Issue) (*jira.User, error) {
 
 func GetIssueTargetVersion(issue *jira.Issue) (*[]*jira.Version, error) {
 	var obj *[]*jira.Version
-	err := GetUnknownField("customfield_12319940", issue, func() interface{} {
+	err := GetUnknownField("customfield_10855", issue, func() interface{} {
 		obj = &[]*jira.Version{{}}
 		return obj
 	})
