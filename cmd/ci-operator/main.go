@@ -900,6 +900,10 @@ func applyEnvOverrides(o *options) {
 			continue
 		}
 		key, value := parts[0], parts[1]
+		key = strings.TrimPrefix(key, "MULTISTAGE_PARAM_OVERRIDE_")
+		if key == "" {
+			continue
+		}
 		for _, test := range o.configSpec.Tests {
 			if test.MultiStageTestConfigurationLiteral != nil {
 				if test.MultiStageTestConfigurationLiteral.Environment == nil {
