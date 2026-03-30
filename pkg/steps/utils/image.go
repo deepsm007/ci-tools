@@ -87,7 +87,56 @@ func FindStatusTag(is *imagev1.ImageStream, tag string) (*coreapi.ObjectReferenc
 
 const DefaultImageImportTimeout = 45 * time.Minute
 
+const importWaitDebugLogEvery = 30 * time.Second
+
+// debugLogImageStreamISTagState logs spec/status correlation for watched tags (debug only).
+func debugLogImageStreamISTagState(ns, isName string, stream *imagev1.ImageStream, tags sets.Set[string], msg string) {
+	if stream == nil {
+		return
+	}
+	f := logrus.Fields{
+		"namespace":          ns,
+		"imageStream":        isName,
+		"metadataGeneration": stream.Generation,
+		"resourceVersion":    stream.ResourceVersion,
+	}
+	for tag := range tags {
+		for _, sp := range stream.Spec.Tags {
+			if sp.Name != tag {
+				continue
+			}
+			prefix := "tag_" + tag
+			if sp.Generation != nil {
+				f[prefix+"_specGen"] = *sp.Generation
+			}
+			break
+		}
+		for _, st := range stream.Status.Tags {
+			if st.Tag != tag {
+				continue
+			}
+			prefix := "tag_" + tag
+			f[prefix+"_statusItems"] = len(st.Items)
+			if len(st.Conditions) > 0 {
+				c := st.Conditions[0]
+				f[prefix+"_condType"] = c.Type
+				f[prefix+"_condStatus"] = c.Status
+				f[prefix+"_condReason"] = c.Reason
+				f[prefix+"_condGen"] = c.Generation
+			}
+			if len(st.Items) > 0 {
+				f[prefix+"_itemGen"] = st.Items[0].Generation
+			}
+			break
+		}
+	}
+	logrus.WithFields(f).Debug(msg)
+}
+
+// TODO(debug): remove verbose logging after investigating image stream import wait
 func getEvaluator(ctx context.Context, client ctrlruntimeclient.Client, ns, name string, tags sets.Set[string], metricsAgent *metrics.MetricsAgent) func(obj runtime.Object) (bool, error) {
+	var lastLog time.Time
+	var lastRV string
 	return func(obj runtime.Object) (bool, error) {
 		switch stream := obj.(type) {
 		case *imagev1.ImageStream:
@@ -102,7 +151,36 @@ func getEvaluator(ctx context.Context, client ctrlruntimeclient.Client, ns, name
 				}
 				_, exist, condition := util.ResolvePullSpec(stream, tag.Name, true)
 				if !exist {
-					logrus.WithField("conditionMessage", condition.Message).Debugf("Waiting to import tag[%d] on imagestream %s/%s:%s ...", i, stream.Namespace, stream.Name, tag.Name)
+					specGen := int64(-1)
+					if tag.Generation != nil {
+						specGen = *tag.Generation
+					}
+					statusItems := 0
+					for _, st := range stream.Status.Tags {
+						if st.Tag == tag.Name {
+							statusItems = len(st.Items)
+							break
+						}
+					}
+					shouldLog := stream.ResourceVersion != lastRV || time.Since(lastLog) >= importWaitDebugLogEvery
+					if shouldLog {
+						lastRV = stream.ResourceVersion
+						lastLog = time.Now()
+						logrus.WithFields(logrus.Fields{
+							"namespace":           stream.Namespace,
+							"imageStream":         stream.Name,
+							"tag":                 tag.Name,
+							"metadataGeneration":  stream.Generation,
+							"resourceVersion":     stream.ResourceVersion,
+							"specTagGeneration":   specGen,
+							"conditionType":       condition.Type,
+							"conditionStatus":     condition.Status,
+							"conditionReason":     condition.Reason,
+							"conditionGeneration": condition.Generation,
+							"statusItems":         statusItems,
+							"conditionMessage":    condition.Message,
+						}).Debugf("waiting to import tag[%d] on imagestream %s/%s:%s", i, stream.Namespace, stream.Name, tag.Name)
+					}
 					if strings.Contains(condition.Message, "Internal error occurred") {
 						if tag.From == nil {
 							// should never happen
@@ -143,10 +221,33 @@ func WaitForImportingISTag(ctx context.Context, client ctrlruntimeclient.WithWat
 	if obj == nil {
 		obj = &imagev1.ImageStream{}
 	}
+	tagList := tags.UnsortedList()
+	sort.Strings(tagList)
+	logrus.WithFields(logrus.Fields{
+		"namespace":   ns,
+		"imageStream": name,
+		"tags":        tagList,
+		"timeout":     timeout.String(),
+	}).Debug("WaitForImportingISTag: start")
 	err := kubernetes.WaitForConditionOnObject(ctx, client, ctrlruntimeclient.ObjectKey{Namespace: ns, Name: name}, &imagev1.ImageStreamList{}, obj, getEvaluator(ctx, client, ns, name, tags, metricsAgent), timeout)
 
 	completionTime := time.Now()
 	duration := completionTime.Sub(startTime)
+	if err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"namespace":   ns,
+			"imageStream": name,
+			"duration":    duration.String(),
+		}).Debug("WaitForImportingISTag: failed")
+		debugLogImageStreamISTagState(ns, name, obj, tags, "WaitForImportingISTag: imagestream snapshot on failure")
+	} else {
+		logrus.WithFields(logrus.Fields{
+			"namespace":   ns,
+			"imageStream": name,
+			"duration":    duration.String(),
+		}).Debug("WaitForImportingISTag: success")
+		debugLogImageStreamISTagState(ns, name, obj, tags, "WaitForImportingISTag: imagestream snapshot on success")
+	}
 
 	for tag := range tags {
 		metricsAgent.Record(&metrics.TagImportEvent{

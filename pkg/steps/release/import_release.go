@@ -410,7 +410,14 @@ func (s *importReleaseStep) getCLIImage(ctx context.Context, target, streamName 
 		return &api.ImageStreamTagReference{Name: overrideCLIStreamName, Tag: "latest"}, nil
 	}
 
+	// TODO(debug): remove verbose logging after investigating stable:cli import wait
 	targetCLI := fmt.Sprintf("%s-cli", target)
+	logrus.WithFields(logrus.Fields{
+		"namespace": s.jobSpec.Namespace(),
+		"target":    target,
+		"stream":    streamName,
+		"step":      s.name,
+	}).Debug("getCLIImage: extracting cli from release image")
 	if _, err := steps.RunPod(ctx, s.client, &coreapi.Pod{
 		ObjectMeta: meta.ObjectMeta{
 			Name:      targetCLI,
@@ -437,13 +444,29 @@ func (s *importReleaseStep) getCLIImage(ctx context.Context, target, streamName 
 	if len(pod.Status.ContainerStatuses) == 0 || pod.Status.ContainerStatuses[0].State.Terminated == nil {
 		return nil, errors.New("unable to extract the 'cli' image from the release image, pod produced no output")
 	}
-	cliImage := pod.Status.ContainerStatuses[0].State.Terminated.Message
+	term := pod.Status.ContainerStatuses[0].State.Terminated
+	cliImage := term.Message
+	logrus.WithFields(logrus.Fields{
+		"namespace":     s.jobSpec.Namespace(),
+		"pod":           targetCLI,
+		"phase":         pod.Status.Phase,
+		"exitCode":      term.ExitCode,
+		"reason":        term.Reason,
+		"signal":        term.Signal,
+		"cliMessageLen": len(cliImage),
+		"step":          s.name,
+	}).Debug("getCLIImage: cvo cli extraction pod finished")
 	// See https://issues.redhat.com/browse/DPTP-2448 for why this is an
 	// explicit URL and not simply the `:cli` tag.
 	cliImageRef, err := util.ParseImageStreamTagReference(cliImage)
 	if err != nil {
 		return nil, err
 	}
+	logrus.WithFields(logrus.Fields{
+		"namespace": s.jobSpec.Namespace(),
+		"stream":    streamName,
+		"step":      s.name,
+	}).Debug("getCLIImage: tagging cli into stable stream")
 	// tag the cli image into stable so we use the correct pull secrets from the namespace
 	referencePolicy := imagev1.LocalTagReferencePolicy
 	if s.referencePolicy == imagev1.SourceTagReferencePolicy {
@@ -470,6 +493,31 @@ func (s *importReleaseStep) getCLIImage(ctx context.Context, target, streamName 
 		return nil, fmt.Errorf("unable to tag the 'cli' image into the stable stream: %w", err)
 	}
 
+	stableIS := &imagev1.ImageStream{}
+	if err := s.client.Get(ctx, ctrlruntimeclient.ObjectKey{Namespace: s.jobSpec.Namespace(), Name: streamName}, stableIS); err != nil {
+		logrus.WithError(err).WithFields(logrus.Fields{
+			"namespace":   s.jobSpec.Namespace(),
+			"imageStream": streamName,
+			"step":        s.name,
+		}).Debug("getCLIImage: get imagestream after cli tag update")
+	} else {
+		logrus.WithFields(logrus.Fields{
+			"namespace":          s.jobSpec.Namespace(),
+			"imageStream":        streamName,
+			"metadataGeneration": stableIS.Generation,
+			"resourceVersion":    stableIS.ResourceVersion,
+			"specTagCount":       len(stableIS.Spec.Tags),
+			"step":               s.name,
+		}).Debug("getCLIImage: imagestream after cli tag update")
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"namespace":   s.jobSpec.Namespace(),
+		"imageStream": streamName,
+		"tags":        []string{"cli"},
+		"timeout":     (10 * time.Minute).String(),
+		"step":        s.name,
+	}).Debug("getCLIImage: waiting for stable cli import")
 	if err := utils.WaitForImportingISTag(ctx, s.client, s.jobSpec.Namespace(), streamName, nil, sets.New("cli"), 10*time.Minute, s.client.MetricsAgent()); err != nil {
 		return nil, fmt.Errorf("unable to wait for the 'cli' image in the stable stream to populate: %w", err)
 	}
