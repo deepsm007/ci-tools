@@ -48,6 +48,7 @@ type Config struct {
 	GSMConfig                   *multi_stage.GSMConfiguration
 	MetricsAgent                *metrics.MetricsAgent
 	SkippedImages               sets.Set[string]
+	InfraSteps                  map[string]api.LiteralTestStep
 	params                      *api.DeferredParameters
 	ClusterProfileGetter        func(profileName string) (*api.ClusterProfileDetails, error)
 

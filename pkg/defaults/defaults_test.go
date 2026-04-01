@@ -1328,6 +1328,7 @@ func TestFromConfig(t *testing.T) {
 		refs                *prowapi.Refs
 		paramFiles          string
 		promote             bool
+		infraSteps          map[string]api.LiteralTestStep
 		env                 api.Parameters
 		params              map[string]string
 		overriddenImagesEnv map[string]string
@@ -1699,7 +1700,10 @@ func TestFromConfig(t *testing.T) {
 				}},
 			},
 		},
-		promote:       true,
+		promote: true,
+		infraSteps: map[string]api.LiteralTestStep{
+			api.PromotionQuayStepName: {Commands: "#!/bin/bash\necho promote\n"},
+		},
 		expectedSteps: []string{"[output-images]", "[images]"},
 		expectedPost:  []string{"[promotion]", "[promotion-quay]"},
 	}, {
@@ -1882,6 +1886,7 @@ func TestFromConfig(t *testing.T) {
 				EnableSecretsStoreCSIDriver: false,
 				MetricsAgent:                nil,
 				SkippedImages:               tc.skippedImages,
+				InfraSteps:                  tc.infraSteps,
 				HTTPServerAddr:              "http://10.0.0.1:8080",
 				HTTPServerMux:               &http.ServeMux{},
 			}

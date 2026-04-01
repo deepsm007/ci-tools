@@ -35,16 +35,17 @@ import (
 // promotionStep will tag a full release suite
 // of images out to the configured namespace.
 type promotionStep struct {
-	name              string
-	configuration     *api.ReleaseBuildConfiguration
-	requiredImages    sets.Set[string]
-	jobSpec           *api.JobSpec
-	client            kubernetes.PodClient
-	pushSecret        *coreapi.Secret
-	registry          string
-	mirrorFunc        func(source, target string, tag api.ImageStreamTagReference, date string, imageMirror map[string]string)
-	targetNameFunc    func(string, api.PromotionTarget) string
-	nodeArchitectures []string
+	name                  string
+	configuration         *api.ReleaseBuildConfiguration
+	requiredImages        sets.Set[string]
+	jobSpec               *api.JobSpec
+	client                kubernetes.PodClient
+	pushSecret            *coreapi.Secret
+	registry              string
+	mirrorFunc            func(source, target string, tag api.ImageStreamTagReference, date string, imageMirror map[string]string)
+	targetNameFunc        func(string, api.PromotionTarget) string
+	nodeArchitectures     []string
+	quayPromotionCommands string
 }
 
 func (s *promotionStep) Inputs() (api.InputDefinition, error) {
@@ -111,7 +112,7 @@ func (s *promotionStep) run(ctx context.Context) error {
 		version = "4.20"
 	}
 
-	if _, err := steps.RunPod(ctx, s.client, getPromotionPod(imageMirrorTarget, timeStr, s.jobSpec.Namespace(), s.name, version, s.nodeArchitectures), false); err != nil {
+	if _, err := steps.RunPod(ctx, s.client, getPromotionPod(imageMirrorTarget, timeStr, s.jobSpec.Namespace(), s.name, version, s.nodeArchitectures, s.quayPromotionCommands), false); err != nil {
 		return fmt.Errorf("unable to run promotion pod: %w", err)
 	}
 	return nil
@@ -247,7 +248,7 @@ const (
 	retryLoopWithBackoff = "backoff=$(($RANDOM % 120))s; echo Sleeping randomized $backoff before retry; sleep $backoff"
 )
 
-func getPromotionPod(imageMirrorTarget map[string]string, timeStr string, namespace string, name string, cliVersion string, nodeArchitectures []string) *coreapi.Pod {
+func getPromotionPod(imageMirrorTarget map[string]string, timeStr string, namespace string, name string, cliVersion string, nodeArchitectures []string, quayPromotionCommands string) *coreapi.Pod {
 	keys := make([]string, 0, len(imageMirrorTarget))
 	for k := range imageMirrorTarget {
 		keys = append(keys, k)
@@ -261,14 +262,10 @@ func getPromotionPod(imageMirrorTarget map[string]string, timeStr string, namesp
 	for _, k := range keys {
 		if strings.Contains(k, fmt.Sprintf("%s_prune_", timeStr)) {
 			pruneImages = append(pruneImages, fmt.Sprintf("%s=%s", imageMirrorTarget[k], k))
+		} else if strings.Contains(k, "-quay:") || strings.Contains(k, "${component}") {
+			tags = append(tags, fmt.Sprintf("%s %s", imageMirrorTarget[k], k))
 		} else {
-			// Detect based on target format: quay-proxy targets should be tagged, others mirrored
-			if strings.Contains(k, "-quay:") || strings.Contains(k, "${component}") {
-				tags = append(tags, fmt.Sprintf("%s %s", imageMirrorTarget[k], k))
-			} else {
-				// Default to mirroring for quay.io targets and other registries
-				images = append(images, fmt.Sprintf("%s=%s", imageMirrorTarget[k], k))
-			}
+			images = append(images, fmt.Sprintf("%s=%s", imageMirrorTarget[k], k))
 		}
 	}
 
@@ -276,47 +273,24 @@ func getPromotionPod(imageMirrorTarget map[string]string, timeStr string, namesp
 	command := []string{"/bin/sh", "-c"}
 
 	var commands []string
-
-	// Generate mirror commands if there are images to mirror
-	if len(images) > 0 {
-		mirrorCommand := fmt.Sprintf("for r in {1..5}; do echo Mirror attempt $r; %s && break; backoff=$(($RANDOM %% 120))s; echo Sleeping randomized $backoff before retry; sleep $backoff; done", getMirrorCommand(registryConfig, images, 2))
-		commands = append(commands, mirrorCommand)
-	}
-
-	// Generate tag commands if there are tags to create
-	if len(tags) > 0 {
-		isQuayPromotion := name == api.PromotionQuayStepName
-		if isQuayPromotion {
-			// For quay promotion, try all tags together first (fastest path), then fallback to individual for partial success
-			tagCommands := []string{"set +e"}
-			// Try all at once first (1-2 attempts for fastest path)
-			singleCmd := fmt.Sprintf(retryLoopTemplate, 2, "'Tag attempt $r (all together)'", getTagCommand(tags, 2), ":")
-			tagCommands = append(tagCommands, singleCmd)
-			// If that fails, try individually for partial success
-			for _, tagPair := range tags {
-				individualCmd := fmt.Sprintf(retryLoopTemplate, 3, "'Tag attempt $r (individual)'", getTagCommand([]string{tagPair}, 2), retryLoopWithBackoff)
-				tagCommands = append(tagCommands, individualCmd)
-			}
-			tagCommands = append(tagCommands, "set -e")
-			commands = append(commands, strings.Join(tagCommands, "\n"))
-		} else {
-			// For regular promotion, use the original retry logic
-			tagCommand := fmt.Sprintf(retryLoopTemplate, 5, "Tag attempt $r", getTagCommand(tags, 2), retryLoopWithBackoff)
-			commands = append(commands, tagCommand)
-		}
-	}
-
 	var args []string
-	if len(pruneImages) > 0 {
-		// See https://github.com/openshift/release/blob/2080ec4a49337c27577a4b2ff08a538e96436e65/hack/qci_registry_pruner.py for details.
-		// Note that we don't retry here and we ignore failures because (a) it may be the first time an image tag is
-		// being promoted to and trying to add a pruning tag to the existing image is doomed to fail. (b) pruning tags
-		// help eliminate a rare race condition. The cost of an occasional failure in establishing them is very low.
-		args = append(args, fmt.Sprintf("%s || true", getMirrorCommand(registryConfig, pruneImages, 2)))
-	}
 
-	args = append(args, commands...)
-	args = []string{strings.Join(args, "\n")}
+	if name == api.PromotionQuayStepName {
+		command = []string{"/bin/bash", "-c"}
+		args = []string{quayPromotionCommands}
+	} else {
+		if len(images) > 0 {
+			commands = append(commands, fmt.Sprintf("for r in {1..5}; do echo Mirror attempt $r; %s && break; backoff=$(($RANDOM %% 120))s; echo Sleeping randomized $backoff before retry; sleep $backoff; done", getMirrorCommand(registryConfig, images, 2)))
+		}
+		if len(tags) > 0 {
+			commands = append(commands, fmt.Sprintf(retryLoopTemplate, 5, "Tag attempt $r", getTagCommand(tags, 2), retryLoopWithBackoff))
+		}
+		if len(pruneImages) > 0 {
+			args = append(args, fmt.Sprintf("%s || true", getMirrorCommand(registryConfig, pruneImages, 2)))
+		}
+		args = append(args, commands...)
+		args = []string{strings.Join(args, "\n")}
+	}
 
 	image := fmt.Sprintf("%s/%s/%s:cli", api.DomainForService(api.ServiceRegistry), "ocp", cliVersion)
 	nodeSelector := map[string]string{"kubernetes.io/arch": "amd64"}
@@ -327,7 +301,7 @@ func getPromotionPod(imageMirrorTarget map[string]string, timeStr string, namesp
 		nodeSelector = map[string]string{"kubernetes.io/arch": "arm64"}
 	}
 
-	return &coreapi.Pod{
+	pod := &coreapi.Pod{
 		ObjectMeta: meta.ObjectMeta{
 			Name:      name,
 			Namespace: namespace,
@@ -378,6 +352,17 @@ func getPromotionPod(imageMirrorTarget map[string]string, timeStr string, namesp
 			},
 		},
 	}
+
+	if name == api.PromotionQuayStepName {
+		pod.Spec.Containers[0].Env = append(pod.Spec.Containers[0].Env,
+			coreapi.EnvVar{Name: "REGISTRY_CONFIG", Value: registryConfig},
+			coreapi.EnvVar{Name: "PRUNE_IMAGES", Value: strings.Join(pruneImages, " ")},
+			coreapi.EnvVar{Name: "MIRROR_IMAGES", Value: strings.Join(images, " ")},
+			coreapi.EnvVar{Name: "TAG_SPECS", Value: strings.Join(tags, "\n")},
+		)
+	}
+
+	return pod
 }
 
 // findDockerImageReference returns DockerImageReference, the string that can be used to pull this image,
@@ -566,17 +551,19 @@ func PromotionStep(
 	mirrorFunc func(source, target string, tag api.ImageStreamTagReference, date string, imageMirror map[string]string),
 	targetNameFunc func(string, api.PromotionTarget) string,
 	nodeArchitectures []string,
+	quayPromotionCommands string,
 ) api.Step {
 	return &promotionStep{
-		name:              name,
-		configuration:     configuration,
-		requiredImages:    requiredImages,
-		jobSpec:           jobSpec,
-		client:            client,
-		pushSecret:        pushSecret,
-		registry:          registry,
-		mirrorFunc:        mirrorFunc,
-		targetNameFunc:    targetNameFunc,
-		nodeArchitectures: nodeArchitectures,
+		name:                  name,
+		configuration:         configuration,
+		requiredImages:        requiredImages,
+		jobSpec:               jobSpec,
+		client:                client,
+		pushSecret:            pushSecret,
+		registry:              registry,
+		mirrorFunc:            mirrorFunc,
+		targetNameFunc:        targetNameFunc,
+		nodeArchitectures:     nodeArchitectures,
+		quayPromotionCommands: quayPromotionCommands,
 	}
 }

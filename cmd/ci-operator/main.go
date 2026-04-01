@@ -376,6 +376,9 @@ type options struct {
 	branch       string
 	variant      string
 
+	infraRegistryPath string
+	infraSteps        registry.ReferenceByName
+
 	injectTest string
 
 	metadataRevision int
@@ -436,6 +439,7 @@ func bindOptions(flag *flag.FlagSet) *options {
 	flag.StringVar(&opt.leaseServerCredentialsFile, "lease-server-credentials-file", "", "The path to credentials file used to access the lease server. The content is of the form <username>:<password>.")
 	flag.DurationVar(&opt.leaseAcquireTimeout, "lease-acquire-timeout", leaseAcquireTimeout, "Maximum amount of time to wait for lease acquisition")
 	flag.StringVar(&opt.registryPath, "registry", "", "Path to the step registry directory")
+	flag.StringVar(&opt.infraRegistryPath, "infra-registry", "", "Path to the infra step registry directory")
 	flag.StringVar(&opt.configSpecPath, "config", "", "The configuration file. If not specified the CONFIG_SPEC environment variable or the configresolver will be used.")
 	flag.StringVar(&opt.unresolvedConfigPath, "unresolved-config", "", "The configuration file, before resolution. If not specified the UNRESOLVED_CONFIG environment variable will be used, if set.")
 	flag.Var(&opt.targets, "target", "One or more targets in the configuration to build. Only steps that are required for this target will be run.")
@@ -578,6 +582,10 @@ func (o *options) Complete() error {
 	mergedConfig := o.injectTest != ""
 	if err := validation.IsValidResolvedConfiguration(o.configSpec, mergedConfig); err != nil {
 		return results.ForReason("validating_config").ForError(err)
+	}
+	o.infraSteps, err = load.InfraRegistry(o.infraRegistryPath)
+	if err != nil {
+		return results.ForReason("loading_infra_registry").WithError(err).Errorf("failed to load infra registry: %v", err)
 	}
 	o.skippedImages = determineSkippedImages(o.configSpec, o.jobSpec, o.targets.values)
 	o.graphConfig = defaults.FromConfigStatic(o.configSpec)
@@ -743,6 +751,7 @@ func (o *options) ToGraphConfig() *defaults.Config {
 		LocalRegistryDNS:       o.localRegistryDNS,
 		MetricsAgent:           o.metricsAgent,
 		SkippedImages:          o.skippedImages,
+		InfraSteps:             o.infraSteps,
 		ClusterProfileGetter:   o.resolverClient.ClusterProfile,
 	}
 }

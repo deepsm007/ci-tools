@@ -8,7 +8,6 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	coreapi "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/utils/diff"
 
@@ -715,14 +714,15 @@ func TestBuildCacheFor(t *testing.T) {
 }
 
 func TestGetPromotionPod(t *testing.T) {
+	const testQuayScript = "#!/bin/bash\necho test-quay-promotion\n"
+
 	var testCases = []struct {
-		name              string
-		stepName          string
-		imageMirror       map[string]string
-		nodeArchitectures []string
-		namespace         string
-		expected          *coreapi.Pod
-		expectedErr       error
+		name                  string
+		stepName              string
+		imageMirror           map[string]string
+		nodeArchitectures     []string
+		namespace             string
+		quayPromotionCommands string
 	}{
 		{
 			name:              "basic case",
@@ -746,7 +746,8 @@ func TestGetPromotionPod(t *testing.T) {
 				"ci/ci-quay:${component}":                               "quay-proxy.ci.openshift.org/openshift/ci:ci_a_latest",
 				"ci/${component}-quay:c":                                "quay-proxy.ci.openshift.org/openshift/ci:ci_c_latest",
 			},
-			namespace: "ci-op-9bdij1f6",
+			namespace:             "ci-op-9bdij1f6",
+			quayPromotionCommands: testQuayScript,
 		},
 		{
 			name:              "promotion-quay-multiple-tags",
@@ -763,7 +764,8 @@ func TestGetPromotionPod(t *testing.T) {
 				"ocp/4.21-quay:ovn-kubernetes-base":                                   "quay-proxy.ci.openshift.org/openshift/ci:ocp_4.21_ovn-kubernetes-base",
 				"ocp/4.21-quay:ovn-kubernetes-microshift":                             "quay-proxy.ci.openshift.org/openshift/ci:ocp_4.21_ovn-kubernetes-microshift",
 			},
-			namespace: "ci-op-9bdij1f6",
+			namespace:             "ci-op-9bdij1f6",
+			quayPromotionCommands: testQuayScript,
 		},
 		{
 			name:              "basic case - arm64 only",
@@ -789,7 +791,7 @@ func TestGetPromotionPod(t *testing.T) {
 
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
-			testhelper.CompareWithFixture(t, getPromotionPod(testCase.imageMirror, "20240603235401", testCase.namespace, testCase.stepName, "4.14", testCase.nodeArchitectures))
+			testhelper.CompareWithFixture(t, getPromotionPod(testCase.imageMirror, "20240603235401", testCase.namespace, testCase.stepName, "4.14", testCase.nodeArchitectures, testCase.quayPromotionCommands))
 		})
 	}
 }

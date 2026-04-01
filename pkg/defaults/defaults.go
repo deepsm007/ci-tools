@@ -303,12 +303,16 @@ func fromConfig(ctx context.Context, cfg *Config) ([]api.Step, []api.Step, error
 			return nil, nil, fmt.Errorf("cannot promote images, no promotion configuration defined")
 		}
 
-		promotionSteps = append(promotionSteps, releasesteps.PromotionStep(api.PromotionStepName, cfg.CIConfig, requiredNames, cfg.JobSpec, cfg.podClient, cfg.PushSecret, registryDomain(cfg.CIConfig.PromotionConfiguration), api.DefaultMirrorFunc, api.DefaultTargetNameFunc, cfg.NodeArchitectures))
+		promotionSteps = append(promotionSteps, releasesteps.PromotionStep(api.PromotionStepName, cfg.CIConfig, requiredNames, cfg.JobSpec, cfg.podClient, cfg.PushSecret, registryDomain(cfg.CIConfig.PromotionConfiguration), api.DefaultMirrorFunc, api.DefaultTargetNameFunc, cfg.NodeArchitectures, ""))
 		// Used primarily (only?) by the ci-chat-bot
 		if cfg.CIConfig.PromotionConfiguration.RegistryOverride != "" {
 			logrus.Info("No images to promote to quay.io if the registry is overridden")
 		} else {
-			promotionSteps = append(promotionSteps, releasesteps.PromotionStep(api.PromotionQuayStepName, cfg.CIConfig, requiredNames, cfg.JobSpec, cfg.podClient, cfg.PushSecret, api.QuayOpenShiftCIRepo, api.QuayCombinedMirrorFunc, api.QuayTargetNameFunc, cfg.NodeArchitectures))
+			quayCommands := strings.TrimSpace(cfg.InfraSteps[api.PromotionQuayStepName].Commands)
+			if quayCommands == "" {
+				return nil, nil, fmt.Errorf("quay promotion requires the %q infra step reference to be resolved", api.PromotionQuayStepName)
+			}
+			promotionSteps = append(promotionSteps, releasesteps.PromotionStep(api.PromotionQuayStepName, cfg.CIConfig, requiredNames, cfg.JobSpec, cfg.podClient, cfg.PushSecret, api.QuayOpenShiftCIRepo, api.QuayCombinedMirrorFunc, api.QuayTargetNameFunc, cfg.NodeArchitectures, quayCommands))
 		}
 	}
 

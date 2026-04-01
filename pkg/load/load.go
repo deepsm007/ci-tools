@@ -219,6 +219,58 @@ func Registry(root string, flags RegistryFlag) (registry.ReferenceByName, regist
 	return references, chains, workflows, profiles, documentation, metadata, observers, nil
 }
 
+// InfraRegistry loads infrastructure step references from a directory separate
+// from the user-facing step registry. These steps are resolved by ci-operator
+// internally and are not available for use in user-defined workflows.
+func InfraRegistry(root string) (registry.ReferenceByName, error) {
+	if root == "" {
+		return nil, nil
+	}
+	references := registry.ReferenceByName{}
+	err := filepath.WalkDir(root, func(path string, info fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if strings.HasPrefix(info.Name(), "..") {
+			if info.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if info.IsDir() || filepath.Ext(info.Name()) == ".md" || info.Name() == "OWNERS" || strings.HasSuffix(path, MetadataSuffix) {
+			return nil
+		}
+		if !strings.HasSuffix(path, RefSuffix) {
+			return nil
+		}
+		raw, err := gzip.ReadFileMaybeGZIP(path)
+		if err != nil {
+			return err
+		}
+		relpath, err := filepath.Rel(root, path)
+		if err != nil {
+			return fmt.Errorf("failed to determine relative path for %s: %w", path, err)
+		}
+		prefix := strings.ReplaceAll(filepath.Dir(relpath), "/", "-")
+		name, _, ref, err := loadReference(raw, filepath.Dir(path), prefix, false)
+		if err != nil {
+			return fmt.Errorf("failed to load infra registry file %s: %w", path, err)
+		}
+		if name != prefix {
+			return fmt.Errorf("name of reference in file %s should be %s", path, prefix)
+		}
+		if strings.TrimSuffix(filepath.Base(path), RefSuffix) != name {
+			return fmt.Errorf("filename %s does not match name of reference; filename should be %s", filepath.Base(path), fmt.Sprint(prefix, RefSuffix))
+		}
+		references[name] = ref
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to load infra registry from %s: %w", root, err)
+	}
+	return references, nil
+}
+
 func loadReference(bytes []byte, baseDir, prefix string, flat bool) (string, string, api.LiteralTestStep, error) {
 	step := api.RegistryReferenceConfig{}
 	err := yaml.UnmarshalStrict(bytes, &step)
