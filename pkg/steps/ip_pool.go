@@ -86,6 +86,12 @@ func (s *ipPoolStep) SubTests() []*junit.TestCase {
 	return nil
 }
 
+func (s *ipPoolStep) SetProfileSecretName(name string) {
+	if setter, ok := s.wrapped.(interface{ SetProfileSecretName(string) }); ok {
+		setter.SetProfileSecretName(name)
+	}
+}
+
 func (s *ipPoolStep) Run(ctx context.Context) error {
 	return results.ForReason("utilizing_ip_pool").ForError(s.run(ctx, time.Minute))
 }

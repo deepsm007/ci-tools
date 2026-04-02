@@ -264,16 +264,19 @@ func (s *leaseStep) handleClusterProfile(ctx context.Context, l *stepLease, name
 		return fmt.Errorf("resolve cluster profile %s: %w", s.clusterProfileName, err)
 	}
 
-	if err := s.importClusterProfileSecret(ctx, cpDetails.Secret, l.ClusterProfileTarget); err != nil {
+	if err := s.importClusterProfileSecret(ctx, cpDetails.Secret); err != nil {
 		return fmt.Errorf("import secret %s for cluster profile %s: %w", cpDetails.Secret, s.clusterProfileName, err)
+	}
+	if setter, ok := s.wrapped.(interface{ SetProfileSecretName(string) }); ok {
+		setter.SetProfileSecretName(cpDetails.Secret)
 	}
 
 	return nil
 }
 
-// importClusterProfileSecret retrieves the cluster profile secret name using config resolver,
-// and gets the secret from the ci namespace
-func (s *leaseStep) importClusterProfileSecret(ctx context.Context, secretName, testName string) error {
+// importClusterProfileSecret copies the cluster profile secret from the ci namespace into
+// the test namespace, using the source secret name as the target name.
+func (s *leaseStep) importClusterProfileSecret(ctx context.Context, secretName string) error {
 	ciSecret := &coreapi.Secret{}
 	err := s.kubeClient.Get(ctx, ctrlruntimeclient.ObjectKey{Namespace: "ci", Name: secretName}, ciSecret)
 	if err != nil {
@@ -284,7 +287,7 @@ func (s *leaseStep) importClusterProfileSecret(ctx context.Context, secretName, 
 		Data: ciSecret.Data,
 		Type: ciSecret.Type,
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      fmt.Sprintf("%s-cluster-profile", testName),
+			Name:      secretName,
 			Namespace: s.namespace(),
 		},
 	}

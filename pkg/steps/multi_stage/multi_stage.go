@@ -106,11 +106,12 @@ var envForProfile = []string{
 }
 
 type multiStageTestStep struct {
-	name             string
-	additionalSuffix string
-	nodeName         string
-	profile          api.ClusterProfile
-	config           *api.ReleaseBuildConfiguration
+	name                      string
+	additionalSuffix          string
+	nodeName                  string
+	profile                   api.ClusterProfile
+	resolvedProfileSecretName string
+	config                    *api.ReleaseBuildConfiguration
 	// params exposes getters for variables created by other steps
 	params                           api.Parameters
 	env                              api.TestEnvironment
@@ -206,12 +207,16 @@ func newMultiStageTestStep(
 	return s
 }
 
+// SetProfileSecretName records the imported cluster profile secret name for pod mounts.
+func (s *multiStageTestStep) SetProfileSecretName(name string) {
+	s.resolvedProfileSecretName = name
+}
+
 func (s *multiStageTestStep) profileSecretName() string {
-	name := s.name
-	if s.additionalSuffix != "" {
-		name = strings.TrimSuffix(name, fmt.Sprintf("-%s", s.additionalSuffix))
+	if s.resolvedProfileSecretName != "" {
+		return s.resolvedProfileSecretName
 	}
-	return name + "-cluster-profile"
+	return s.name + "-cluster-profile"
 }
 
 func (s *multiStageTestStep) Inputs() (api.InputDefinition, error) {

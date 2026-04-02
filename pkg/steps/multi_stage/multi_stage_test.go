@@ -410,10 +410,11 @@ func TestEnvironment(t *testing.T) {
 func TestProfileSecretName(t *testing.T) {
 	t.Parallel()
 	testCases := []struct {
-		name             string
-		stepName         string
-		additionalSuffix string
-		expected         string
+		name                      string
+		stepName                  string
+		additionalSuffix          string
+		resolvedProfileSecretName string
+		expected                  string
 	}{
 		{
 			name:     "no additional suffix",
@@ -421,15 +422,16 @@ func TestProfileSecretName(t *testing.T) {
 			expected: "step-cluster-profile",
 		},
 		{
-			name:             "additional suffix",
-			stepName:         "step-0",
-			additionalSuffix: "0",
-			expected:         "step-cluster-profile",
+			name:                      "resolved name from lease takes precedence",
+			stepName:                  "step-0",
+			additionalSuffix:          "0",
+			resolvedProfileSecretName: "cluster-secrets-azure4",
+			expected:                  "cluster-secrets-azure4",
 		},
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			step := multiStageTestStep{name: tc.stepName, additionalSuffix: tc.additionalSuffix}
+			step := multiStageTestStep{name: tc.stepName, additionalSuffix: tc.additionalSuffix, resolvedProfileSecretName: tc.resolvedProfileSecretName}
 			result := step.profileSecretName()
 			if diff := cmp.Diff(tc.expected, result); diff != "" {
 				t.Fatalf("result does not match expected, diff: %s", diff)

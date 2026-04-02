@@ -348,7 +348,7 @@ func TestAcquireLeases(t *testing.T) {
 					{
 						ObjectMeta: v1.ObjectMeta{
 							Namespace:       ns,
-							Name:            "e2e-aws-ovn-cluster-profile",
+							Name:            "cluster-secrets-aws",
 							ResourceVersion: "1",
 						},
 						Data: map[string][]byte{
@@ -424,7 +424,7 @@ func TestAcquireLeases(t *testing.T) {
 					{
 						ObjectMeta: v1.ObjectMeta{
 							Namespace:       ns,
-							Name:            "e2e-aws-ovn-cluster-profile",
+							Name:            "cluster-secrets-aws",
 							ResourceVersion: "1",
 						},
 						Data: map[string][]byte{
@@ -497,7 +497,7 @@ func TestAcquireLeases(t *testing.T) {
 					{
 						ObjectMeta: v1.ObjectMeta{
 							Namespace:       ns,
-							Name:            "e2e-aws-ovn-cluster-profile",
+							Name:            "cluster-secrets-aws",
 							ResourceVersion: "1",
 						},
 						Data: map[string][]byte{
