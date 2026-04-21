@@ -311,15 +311,17 @@ func hasMinimumVersion(config *api.ReleaseTagConfiguration, majorVersion, minorV
 	return major > majorVersion || (major == majorVersion && minor >= minorVersion)
 }
 
-func buildOcAdmReleaseNewCommand(config *api.ReleaseTagConfiguration, namespace, streamName, cvo, destination, version string) string {
+func ocAdmReleaseNewArgs(config *api.ReleaseTagConfiguration, namespace, streamName, cvo, destination, version, fromISFile string) []string {
 	cmd := []string{"oc", "adm", "release", "new",
 		"--max-per-registry=32",
 		"-n", namespace,
-		"--from-image-stream", streamName,
-		"--to-image-base", cvo,
-		"--to-image", destination,
-		"--name", version,
 	}
+	if fromISFile != "" {
+		cmd = append(cmd, "--from-image-stream-file="+fromISFile)
+	} else {
+		cmd = append(cmd, "--from-image-stream", streamName)
+	}
+	cmd = append(cmd, "--to-image-base", cvo, "--to-image", destination, "--name", version)
 
 	if config.ReferencePolicy != nil && hasMinimumVersion(config, 4, 13) {
 		if *config.ReferencePolicy == imagev1.SourceTagReferencePolicy {
@@ -331,5 +333,24 @@ func buildOcAdmReleaseNewCommand(config *api.ReleaseTagConfiguration, namespace,
 	if hasMinimumVersion(config, 4, 11) {
 		cmd = append(cmd, "--keep-manifest-list")
 	}
-	return strings.Join(cmd, " ")
+	return cmd
+}
+
+// buildOcAdmReleaseNewCommand returns shell run in the release pod: when oc get imagestream -o yaml
+// succeeds, run oc adm release new with --from-image-stream-file, or else the same with --from-image-stream;
+// if get fails, use --from-image-stream only.
+func buildOcAdmReleaseNewCommand(config *api.ReleaseTagConfiguration, namespace, streamName, cvo, destination, version string) string {
+	fromFile := strings.Join(ocAdmReleaseNewArgs(config, namespace, streamName, cvo, destination, version, "${RELEASE_IS_FILE}"), " ")
+	fromStream := strings.Join(ocAdmReleaseNewArgs(config, namespace, streamName, cvo, destination, version, ""), " ")
+	return fmt.Sprintf(`(
+RELEASE_IS_FILE="${ARTIFACT_DIR:-/tmp}/release-input-is.yaml"
+GET_ERR="${ARTIFACT_DIR:-/tmp}/release-is-get.err"
+if oc get imagestream -n %q %q -o yaml > "${RELEASE_IS_FILE}" 2>"${GET_ERR}"; then
+	%s || %s
+else
+	echo "$(date -Is) oc get imagestream -n %q %q -o yaml failed, stderr:" >&2
+	cat "${GET_ERR}" >&2
+	%s
+fi
+)`, namespace, streamName, fromFile, fromStream, namespace, streamName, fromStream)
 }

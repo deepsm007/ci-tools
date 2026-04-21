@@ -1,6 +1,7 @@
 package release
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -10,19 +11,18 @@ import (
 	"github.com/openshift/ci-tools/pkg/api"
 )
 
-func TestBuildOcAdmReleaseNewCommand(t *testing.T) {
+func TestOcAdmReleaseNewArgs(t *testing.T) {
 	sourceTagReference := imagev1.SourceTagReferencePolicy
 
-	tests := []struct {
-		name          string
-		config        *api.ReleaseTagConfiguration
-		referenceMode string
-		namespace     string
-		streamName    string
-		cvo           string
-		destination   string
-		version       string
-		expectedCmd   string
+	var testCases = []struct {
+		name        string
+		config      *api.ReleaseTagConfiguration
+		namespace   string
+		streamName  string
+		cvo         string
+		destination string
+		version     string
+		want        string
 	}{
 		{
 			name:        "4.10 no keep-manifest-list",
@@ -32,7 +32,7 @@ func TestBuildOcAdmReleaseNewCommand(t *testing.T) {
 			cvo:         "cvo",
 			destination: "dest",
 			version:     "ver",
-			expectedCmd: "oc adm release new --max-per-registry=32 -n ns --from-image-stream stream --to-image-base cvo --to-image dest --name ver",
+			want:        "oc adm release new --max-per-registry=32 -n ns --from-image-stream stream --to-image-base cvo --to-image dest --name ver",
 		},
 		{
 			name:        "4.11 with keep-manifest-list",
@@ -42,7 +42,7 @@ func TestBuildOcAdmReleaseNewCommand(t *testing.T) {
 			cvo:         "cvo",
 			destination: "dest",
 			version:     "ver",
-			expectedCmd: "oc adm release new --max-per-registry=32 -n ns --from-image-stream stream --to-image-base cvo --to-image dest --name ver --keep-manifest-list",
+			want:        "oc adm release new --max-per-registry=32 -n ns --from-image-stream stream --to-image-base cvo --to-image dest --name ver --keep-manifest-list",
 		},
 		{
 			name:        "4.12 with keep-manifest-list and reference mode",
@@ -52,7 +52,7 @@ func TestBuildOcAdmReleaseNewCommand(t *testing.T) {
 			cvo:         "cvo",
 			destination: "dest",
 			version:     "ver",
-			expectedCmd: "oc adm release new --max-per-registry=32 -n ns --from-image-stream stream --to-image-base cvo --to-image dest --name ver --keep-manifest-list",
+			want:        "oc adm release new --max-per-registry=32 -n ns --from-image-stream stream --to-image-base cvo --to-image dest --name ver --keep-manifest-list",
 		},
 		{
 			name:        "4.15 with keep-manifest-list and reference mode",
@@ -62,7 +62,7 @@ func TestBuildOcAdmReleaseNewCommand(t *testing.T) {
 			cvo:         "cvo",
 			destination: "dest",
 			version:     "ver",
-			expectedCmd: "oc adm release new --max-per-registry=32 -n ns --from-image-stream stream --to-image-base cvo --to-image dest --name ver --reference-mode=source --keep-manifest-list",
+			want:        "oc adm release new --max-per-registry=32 -n ns --from-image-stream stream --to-image-base cvo --to-image dest --name ver --reference-mode=source --keep-manifest-list",
 		},
 		{
 			name:        "malformed version returns no keep-manifest-list",
@@ -72,7 +72,7 @@ func TestBuildOcAdmReleaseNewCommand(t *testing.T) {
 			cvo:         "cvo",
 			destination: "dest",
 			version:     "ver",
-			expectedCmd: "oc adm release new --max-per-registry=32 -n ns --from-image-stream stream --to-image-base cvo --to-image dest --name ver",
+			want:        "oc adm release new --max-per-registry=32 -n ns --from-image-stream stream --to-image-base cvo --to-image dest --name ver",
 		},
 		{
 			name:        "malformed version with reference policy yields no extra flags",
@@ -82,22 +82,47 @@ func TestBuildOcAdmReleaseNewCommand(t *testing.T) {
 			cvo:         "cvo",
 			destination: "dest",
 			version:     "ver",
-			expectedCmd: "oc adm release new --max-per-registry=32 -n ns --from-image-stream stream --to-image-base cvo --to-image dest --name ver",
+			want:        "oc adm release new --max-per-registry=32 -n ns --from-image-stream stream --to-image-base cvo --to-image dest --name ver",
 		},
 	}
 
-	for _, tt := range tests {
-		cmd := buildOcAdmReleaseNewCommand(
-			tt.config,
-			tt.namespace,
-			tt.streamName,
-			tt.cvo,
-			tt.destination,
-			tt.version,
-		)
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			got := strings.Join(ocAdmReleaseNewArgs(
+				testCase.config,
+				testCase.namespace,
+				testCase.streamName,
+				testCase.cvo,
+				testCase.destination,
+				testCase.version,
+				"",
+			), " ")
+			if diff := cmp.Diff(testCase.want, got); diff != "" {
+				t.Errorf("%s: unexpected argv: %s", testCase.name, diff)
+			}
+		})
+	}
+}
 
-		if diff := cmp.Diff(tt.expectedCmd, cmd); diff != "" {
-			t.Fatal(diff)
-		}
+func TestBuildOcAdmReleaseNewCommand(t *testing.T) {
+	cfg := &api.ReleaseTagConfiguration{Name: "4.15"}
+	got := buildOcAdmReleaseNewCommand(cfg, "ns", "stable", "cvo", "dest:tag", "ver")
+	var testCases = []struct {
+		name string
+		want string
+	}{
+		{"exports imagestream to file", `oc get imagestream -n "ns" "stable"`},
+		{"captures oc get stderr", "GET_ERR"},
+		{"logs stderr on get failure", "failed, stderr:"},
+		{"uses from-image-stream-file", "--from-image-stream-file=${RELEASE_IS_FILE}"},
+		{"file then stream with or", " || "},
+		{"from-image-stream fallback", "--from-image-stream stable"},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if !strings.Contains(got, testCase.want) {
+				t.Errorf("%s: got does not contain %q:\n%s", testCase.name, testCase.want, got)
+			}
+		})
 	}
 }
