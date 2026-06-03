@@ -2,7 +2,7 @@ metadata:
   creationTimestamp: null
   labels:
     ci-operator.openshift.io/save-container-logs: "true"
-  name: promotion-quay
+  name: promotion
   namespace: ci-op-9bdij1f6
 spec:
   containers:

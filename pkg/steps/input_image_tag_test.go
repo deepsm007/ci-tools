@@ -204,7 +204,7 @@ func TestInputImageTagStepOfficialSpec(t *testing.T) {
 	}
 }
 
-func TestInputImageTagStepLegacyStream(t *testing.T) {
+func TestInputImageTagStepConsolidatedStream(t *testing.T) {
 	baseImage := api.ImageStreamTagReference{Namespace: "ocp", Name: "5.0", Tag: "cli"}
 	config := api.InputImageTagStepConfiguration{
 		InputImage: api.InputImage{To: "cli", BaseImage: baseImage},
@@ -241,7 +241,7 @@ func TestInputImageTagStepLegacyStream(t *testing.T) {
 		Tag: &imagev1.TagReference{
 			From:            &corev1.ObjectReference{Kind: "DockerImage", Name: quayRef},
 			ImportPolicy:    imagev1.TagImportPolicy{ImportMode: imagev1.ImportModePreserveOriginal},
-			ReferencePolicy: imagev1.TagReferencePolicy{Type: imagev1.SourceTagReferencePolicy},
+			ReferencePolicy: imagev1.TagReferencePolicy{Type: imagev1.LocalTagReferencePolicy},
 		},
 	}
 	got := &imagev1.ImageStreamTag{}

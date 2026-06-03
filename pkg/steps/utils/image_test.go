@@ -39,7 +39,8 @@ func TestResolveOfficialInputFrom(t *testing.T) {
 		wantOK   bool
 		wantFrom *coreapi.ObjectReference
 	}{
-		{name: "non-consolidated", base: api.ImageStreamTagReference{Namespace: "ocp", Name: "5.0", Tag: "cli"}, wantOK: false},
+		{name: "official ocp 5.0", base: api.ImageStreamTagReference{Namespace: "ocp", Name: "5.0", Tag: "cli"}, wantOK: true, wantFrom: &coreapi.ObjectReference{Kind: "DockerImage", Name: api.QuayImageReference(api.ImageStreamTagReference{Namespace: "ocp", Name: "5.0", Tag: "cli"})}},
+		{name: "non-official namespace", base: api.ImageStreamTagReference{Namespace: "ci", Name: "5.0", Tag: "cli"}, wantOK: false},
 		{
 			name: "spec docker",
 			base: base,
