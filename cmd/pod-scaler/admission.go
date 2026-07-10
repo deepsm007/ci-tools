@@ -900,6 +900,9 @@ func applyAuthoritativeLimitDecrease(recommended, configured *corev1.ResourceReq
 			continue
 		}
 		for _, field := range []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory} {
+			if workloadType == WorkloadTypeBuild && target.resourceType == "limit" {
+				continue
+			}
 			if field == corev1.ResourceCPU && cpuLevel > 0 {
 				continue
 			}

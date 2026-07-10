@@ -1190,6 +1190,35 @@ func TestClampRequestsToLimits(t *testing.T) {
 	}
 }
 
+func TestApplyAuthoritativeLimitDecrease_skipsBuildLimits(t *testing.T) {
+	ours := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceMemory: *resource.NewQuantity(1e1, resource.BinarySI),
+		},
+	}
+	theirs := corev1.ResourceRequirements{
+		Limits: corev1.ResourceList{
+			corev1.ResourceMemory: *resource.NewQuantity(2e10, resource.BinarySI),
+		},
+		Requests: corev1.ResourceList{
+			corev1.ResourceMemory: *resource.NewQuantity(2e10, resource.BinarySI),
+		},
+	}
+	expected := corev1.ResourceRequirements{
+		Limits: corev1.ResourceList{
+			corev1.ResourceMemory: *resource.NewQuantity(2e10, resource.BinarySI),
+		},
+		Requests: corev1.ResourceList{
+			corev1.ResourceMemory: *resource.NewQuantity(15e9, resource.BinarySI),
+		},
+	}
+
+	applyAuthoritativeLimitDecrease(&ours, &theirs, "test-build-docker-build", WorkloadTypeBuild, false, "builds", authLegacyMemory(0.25), nil, logrus.WithField("test", t.Name()))
+	if diff := cmp.Diff(theirs, expected); diff != "" {
+		t.Errorf("expected build limits unchanged with request decrease: %s", diff)
+	}
+}
+
 func TestApplyAuthoritativeLimitDecrease_skipsDuringEscalation(t *testing.T) {
 	ours := corev1.ResourceRequirements{
 		Requests: corev1.ResourceList{
