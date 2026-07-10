@@ -92,10 +92,10 @@ type consumerOptions struct {
 	authoritativeCPULimitMaxReductionPercent      float64
 	authoritativeMemoryRequestMaxReductionPercent float64
 	authoritativeMemoryLimitMaxReductionPercent   float64
-	authoritativeLimitDecreaseSkipWorkloadTypes   string
-	authoritativeLimitDecreaseSkipWorkloadClasses string
-	authoritativeRequestDecreaseSkipWorkloadTypes string
-	authoritativeRequestDecreaseSkipWorkloadClasses string
+	skipWorkloadTypeRequestDecrease  string
+	skipWorkloadTypeLimitDecrease    string
+	skipWorkloadClassRequestDecrease string
+	skipWorkloadClassLimitDecrease   string
 }
 
 func (o *consumerOptions) authoritativeConfig() authoritativeConfig {
@@ -116,10 +116,10 @@ func (o *consumerOptions) authoritativeConfig() authoritativeConfig {
 
 func (o *consumerOptions) authoritativeSkipConfig() authoritativeSkipConfig {
 	return parseAuthoritativeSkipConfig(
-		o.authoritativeLimitDecreaseSkipWorkloadTypes,
-		o.authoritativeLimitDecreaseSkipWorkloadClasses,
-		o.authoritativeRequestDecreaseSkipWorkloadTypes,
-		o.authoritativeRequestDecreaseSkipWorkloadClasses,
+		o.skipWorkloadTypeLimitDecrease,
+		o.skipWorkloadClassLimitDecrease,
+		o.skipWorkloadTypeRequestDecrease,
+		o.skipWorkloadClassRequestDecrease,
 	)
 }
 
@@ -165,10 +165,10 @@ func bindOptions(fs *flag.FlagSet) *options {
 	fs.Float64Var(&o.authoritativeMemoryRequestMaxReductionPercent, "authoritative-memory-request-max-reduction-percent", 1.0, "Maximum memory request reduction per admission in authoritative mode, as a fraction (0.25 = 25%, 1.0 = no cap).")
 	fs.Float64Var(&o.authoritativeMemoryLimitMaxReductionPercent, "authoritative-memory-limit-max-reduction-percent", 1.0, "Maximum memory limit reduction per admission in authoritative mode, as a fraction (0.25 = 25%, 1.0 = no cap).")
 	fs.Float64Var(&o.authoritativeMemoryLimitMaxReductionPercent, "authoritative-memory-max-reduction-percent", 1.0, "Deprecated: use --authoritative-memory-limit-max-reduction-percent.")
-	fs.StringVar(&o.authoritativeLimitDecreaseSkipWorkloadTypes, "authoritative-limit-decrease-skip-workload-types", "", "Comma-separated workload types that skip authoritative limit decreases (e.g. build).")
-	fs.StringVar(&o.authoritativeLimitDecreaseSkipWorkloadClasses, "authoritative-limit-decrease-skip-workload-classes", "", "Comma-separated ci-workload classes that skip authoritative limit decreases (e.g. builds).")
-	fs.StringVar(&o.authoritativeRequestDecreaseSkipWorkloadTypes, "authoritative-request-decrease-skip-workload-types", "", "Comma-separated workload types that skip authoritative request decreases.")
-	fs.StringVar(&o.authoritativeRequestDecreaseSkipWorkloadClasses, "authoritative-request-decrease-skip-workload-classes", "", "Comma-separated ci-workload classes that skip authoritative request decreases.")
+	fs.StringVar(&o.skipWorkloadTypeLimitDecrease, "pod-scaler-skip-workload-type-limit-decrease", "", "Comma-separated workload types that skip authoritative limit decreases (e.g. build).")
+	fs.StringVar(&o.skipWorkloadClassLimitDecrease, "pod-scaler-skip-workload-class-limit-decrease", "", "Comma-separated ci-workload classes that skip authoritative limit decreases (e.g. builds,tests).")
+	fs.StringVar(&o.skipWorkloadTypeRequestDecrease, "pod-scaler-skip-workload-type-request-decrease", "", "Comma-separated workload types that skip authoritative request decreases.")
+	fs.StringVar(&o.skipWorkloadClassRequestDecrease, "pod-scaler-skip-workload-class-request-decrease", "", "Comma-separated ci-workload classes that skip authoritative request decreases.")
 	fs.Float64Var(&o.failureEscalationFactor, "failure-escalation-factor", 1.5, "Multiplier applied per escalation level after OOM or CPU throttle (1.5 = 50% increase per level).")
 	fs.IntVar(&o.failureEscalationMaxLevel, "failure-escalation-max-level", 10, "Maximum escalation level tracked for a workload.")
 	fs.Float64Var(&o.cpuThrottleThreshold, "cpu-throttle-threshold", 0.25, "Minimum throttled/total CPU CFS period ratio to count as CPU deprived.")
