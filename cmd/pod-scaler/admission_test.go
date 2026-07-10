@@ -1068,7 +1068,7 @@ func TestApplyAuthoritativeLimitDecrease(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			applyAuthoritativeLimitDecrease(&tc.ours, &tc.theirs, "test", "build", tc.isMeasured, "", tc.authoritative, nil, logrus.WithField("test", tc.name))
+			applyAuthoritativeLimitDecrease(&tc.ours, &tc.theirs, "test", WorkloadTypeProwjob, tc.isMeasured, "", tc.authoritative, nil, logrus.WithField("test", tc.name))
 			if diff := cmp.Diff(tc.theirs, tc.expected); diff != "" {
 				t.Errorf("unexpected resources: %s", diff)
 			}
@@ -1096,7 +1096,7 @@ func TestApplyAuthoritativeLimitDecrease_uncappedMemory(t *testing.T) {
 		},
 	}
 
-	applyAuthoritativeLimitDecrease(&ours, &theirs, "test", "build", false, "", authLegacyCPUAndMemory(0.25, 1.0), nil, logrus.WithField("test", t.Name()))
+	applyAuthoritativeLimitDecrease(&ours, &theirs, "test", WorkloadTypeProwjob, false, "", authLegacyCPUAndMemory(0.25, 1.0), nil, logrus.WithField("test", t.Name()))
 	if diff := cmp.Diff(theirs, expected); diff != "" {
 		t.Errorf("unexpected resources: %s", diff)
 	}
@@ -1125,7 +1125,7 @@ func TestApplyAuthoritativeLimitDecrease_dryRun(t *testing.T) {
 		},
 	}
 
-	applyAuthoritativeLimitDecrease(&ours, &theirs, "test", "build", false, "", authLegacyCPUDryRun(0.25), nil, logrus.WithField("test", t.Name()))
+	applyAuthoritativeLimitDecrease(&ours, &theirs, "test", WorkloadTypeProwjob, false, "", authLegacyCPUDryRun(0.25), nil, logrus.WithField("test", t.Name()))
 	if diff := cmp.Diff(theirs, expected); diff != "" {
 		t.Errorf("dry-run should not mutate resources: %s", diff)
 	}
@@ -1154,7 +1154,7 @@ func TestApplyAuthoritativeLimitDecrease_separateRequestLimitCaps(t *testing.T) 
 		},
 	}
 
-	applyAuthoritativeLimitDecrease(&ours, &theirs, "test", "build", false, "", authoritativeConfig{
+	applyAuthoritativeLimitDecrease(&ours, &theirs, "test", WorkloadTypeProwjob, false, "", authoritativeConfig{
 		cpuRequest: authPair(true, false, 0.25),
 		cpuLimit:   authPair(true, false, 1.0),
 	}, nil, logrus.WithField("test", t.Name()))
