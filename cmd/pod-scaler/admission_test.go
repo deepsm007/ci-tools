@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/webhook/admission"
 	"sigs.k8s.io/prow/pkg/kube"
@@ -582,7 +583,7 @@ func TestMutatePodResources(t *testing.T) {
 	for _, testCase := range testCases {
 		t.Run(testCase.name, func(t *testing.T) {
 			original := testCase.pod.DeepCopy()
-			mutatePodResources(testCase.pod, testCase.server, testCase.mutateResourceLimits, 10, "20Gi", false, nil, 50.0, authoritativeConfig{}, nil, &defaultReporter, logrus.WithField("test", testCase.name))
+			mutatePodResources(testCase.pod, testCase.server, testCase.mutateResourceLimits, 10, "20Gi", false, nil, 50.0, authoritativeConfig{}, authoritativeSkipConfig{}, nil, &defaultReporter, logrus.WithField("test", testCase.name))
 			diff := cmp.Diff(original, testCase.pod)
 			// In some cases, cmp.Diff decides to use non-breaking spaces, and it's not
 			// particularly deterministic about this. We don't care.
@@ -647,7 +648,7 @@ func TestMutatePodResources_ciWorkloadLabelDoesNotBreakCacheLookup(t *testing.T)
 		},
 	}
 
-	mutatePodResources(pod, server, false, 10, "20Gi", false, nil, 50.0, authoritativeConfig{}, nil, &defaultReporter, logger)
+	mutatePodResources(pod, server, false, 10, "20Gi", false, nil, 50.0, authoritativeConfig{}, authoritativeSkipConfig{}, nil, &defaultReporter, logger)
 
 	got := pod.Spec.Containers[0].Resources.Requests.Cpu().MilliValue()
 	const want = 6000 // 5000m recommendation inflated by 1.2 in useOursIfLarger
@@ -1068,7 +1069,7 @@ func TestApplyAuthoritativeLimitDecrease(t *testing.T) {
 	}
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			applyAuthoritativeLimitDecrease(&tc.ours, &tc.theirs, "test", WorkloadTypeProwjob, tc.isMeasured, "", tc.authoritative, nil, logrus.WithField("test", tc.name))
+			applyAuthoritativeLimitDecrease(&tc.ours, &tc.theirs, "test", WorkloadTypeProwjob, tc.isMeasured, "", tc.authoritative, authoritativeSkipConfig{}, nil, logrus.WithField("test", tc.name))
 			if diff := cmp.Diff(tc.theirs, tc.expected); diff != "" {
 				t.Errorf("unexpected resources: %s", diff)
 			}
@@ -1096,7 +1097,7 @@ func TestApplyAuthoritativeLimitDecrease_uncappedMemory(t *testing.T) {
 		},
 	}
 
-	applyAuthoritativeLimitDecrease(&ours, &theirs, "test", WorkloadTypeProwjob, false, "", authLegacyCPUAndMemory(0.25, 1.0), nil, logrus.WithField("test", t.Name()))
+	applyAuthoritativeLimitDecrease(&ours, &theirs, "test", WorkloadTypeProwjob, false, "", authLegacyCPUAndMemory(0.25, 1.0), authoritativeSkipConfig{}, nil, logrus.WithField("test", t.Name()))
 	if diff := cmp.Diff(theirs, expected); diff != "" {
 		t.Errorf("unexpected resources: %s", diff)
 	}
@@ -1125,7 +1126,7 @@ func TestApplyAuthoritativeLimitDecrease_dryRun(t *testing.T) {
 		},
 	}
 
-	applyAuthoritativeLimitDecrease(&ours, &theirs, "test", WorkloadTypeProwjob, false, "", authLegacyCPUDryRun(0.25), nil, logrus.WithField("test", t.Name()))
+	applyAuthoritativeLimitDecrease(&ours, &theirs, "test", WorkloadTypeProwjob, false, "", authLegacyCPUDryRun(0.25), authoritativeSkipConfig{}, nil, logrus.WithField("test", t.Name()))
 	if diff := cmp.Diff(theirs, expected); diff != "" {
 		t.Errorf("dry-run should not mutate resources: %s", diff)
 	}
@@ -1157,7 +1158,7 @@ func TestApplyAuthoritativeLimitDecrease_separateRequestLimitCaps(t *testing.T) 
 	applyAuthoritativeLimitDecrease(&ours, &theirs, "test", WorkloadTypeProwjob, false, "", authoritativeConfig{
 		cpuRequest: authPair(true, false, 0.25),
 		cpuLimit:   authPair(true, false, 1.0),
-	}, nil, logrus.WithField("test", t.Name()))
+	}, authoritativeSkipConfig{}, nil, logrus.WithField("test", t.Name()))
 	if diff := cmp.Diff(theirs, expected); diff != "" {
 		t.Errorf("unexpected resources: %s", diff)
 	}
@@ -1213,9 +1214,51 @@ func TestApplyAuthoritativeLimitDecrease_skipsBuildLimits(t *testing.T) {
 		},
 	}
 
-	applyAuthoritativeLimitDecrease(&ours, &theirs, "test-build-docker-build", WorkloadTypeBuild, false, "builds", authLegacyMemory(0.25), nil, logrus.WithField("test", t.Name()))
+	applyAuthoritativeLimitDecrease(&ours, &theirs, "test-build-docker-build", WorkloadTypeBuild, false, "builds", authLegacyMemory(0.25), parseAuthoritativeSkipConfig("build", "", "", ""), nil, logrus.WithField("test", t.Name()))
 	if diff := cmp.Diff(theirs, expected); diff != "" {
 		t.Errorf("expected build limits unchanged with request decrease: %s", diff)
+	}
+}
+
+func TestApplyAuthoritativeLimitDecrease_skipsBuildLimitsByClass(t *testing.T) {
+	ours := corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceMemory: *resource.NewQuantity(1e1, resource.BinarySI),
+		},
+	}
+	theirs := corev1.ResourceRequirements{
+		Limits: corev1.ResourceList{
+			corev1.ResourceMemory: *resource.NewQuantity(2e10, resource.BinarySI),
+		},
+		Requests: corev1.ResourceList{
+			corev1.ResourceMemory: *resource.NewQuantity(2e10, resource.BinarySI),
+		},
+	}
+	expected := corev1.ResourceRequirements{
+		Limits: corev1.ResourceList{
+			corev1.ResourceMemory: *resource.NewQuantity(2e10, resource.BinarySI),
+		},
+		Requests: corev1.ResourceList{
+			corev1.ResourceMemory: *resource.NewQuantity(15e9, resource.BinarySI),
+		},
+	}
+
+	applyAuthoritativeLimitDecrease(&ours, &theirs, "test", WorkloadTypeProwjob, false, "builds", authLegacyMemory(0.25), parseAuthoritativeSkipConfig("", "builds", "", ""), nil, logrus.WithField("test", t.Name()))
+	if diff := cmp.Diff(theirs, expected); diff != "" {
+		t.Errorf("expected limits unchanged when workload class is skipped: %s", diff)
+	}
+}
+
+func TestParseAuthoritativeSkipConfig(t *testing.T) {
+	got := parseAuthoritativeSkipConfig(" build,prowjob ", "builds", "", " tests ")
+	if !got.limitDecreaseWorkloadTypes.Has("build") || !got.limitDecreaseWorkloadTypes.Has("prowjob") {
+		t.Fatalf("unexpected limit workload types: %v", sets.List(got.limitDecreaseWorkloadTypes))
+	}
+	if !got.limitDecreaseWorkloadClasses.Has("builds") {
+		t.Fatalf("unexpected limit workload classes: %v", sets.List(got.limitDecreaseWorkloadClasses))
+	}
+	if !got.requestDecreaseWorkloadClasses.Has("tests") {
+		t.Fatalf("unexpected request workload classes: %v", sets.List(got.requestDecreaseWorkloadClasses))
 	}
 }
 
@@ -1239,7 +1282,7 @@ func TestApplyAuthoritativeLimitDecrease_skipsDuringEscalation(t *testing.T) {
 		},
 	}
 
-	applyAuthoritativeLimitDecrease(&ours, &theirs, "test", "build", false, "", authLegacyMemory(0.25), server, logrus.WithField("test", t.Name()))
+	applyAuthoritativeLimitDecrease(&ours, &theirs, "test", "build", false, "", authLegacyMemory(0.25), authoritativeSkipConfig{}, server, logrus.WithField("test", t.Name()))
 	want := *resource.NewQuantity(2e10, resource.BinarySI)
 	if diff := cmp.Diff(theirs, corev1.ResourceRequirements{
 		Limits:   corev1.ResourceList{corev1.ResourceMemory: want},

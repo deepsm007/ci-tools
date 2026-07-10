@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -18,6 +19,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/sets"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
@@ -64,7 +66,48 @@ func (c authoritativeConfig) anyDryRun() bool {
 	return c.cpuRequest.dryRun || c.cpuLimit.dryRun || c.memoryRequest.dryRun || c.memoryLimit.dryRun
 }
 
-func admit(port, healthPort int, certDir string, client buildclientv1.BuildV1Interface, kubeClient kubernetes.Interface, loaders map[string][]*cacheReloader, mutateResourceLimits bool, cpuCap int64, memoryCap string, cpuPriorityScheduling int64, percentageMeasured float64, measuredPodCPUIncrease float64, systemReservedCPU int64, authoritative authoritativeConfig, escalations *escalationServer, reporter results.PodScalerReporter) {
+type authoritativeSkipConfig struct {
+	limitDecreaseWorkloadTypes     sets.Set[string]
+	limitDecreaseWorkloadClasses   sets.Set[string]
+	requestDecreaseWorkloadTypes   sets.Set[string]
+	requestDecreaseWorkloadClasses sets.Set[string]
+}
+
+func parseAuthoritativeSkipConfig(limitTypes, limitClasses, requestTypes, requestClasses string) authoritativeSkipConfig {
+	return authoritativeSkipConfig{
+		limitDecreaseWorkloadTypes:     parseCommaSeparatedSet(limitTypes),
+		limitDecreaseWorkloadClasses:   parseCommaSeparatedSet(limitClasses),
+		requestDecreaseWorkloadTypes:   parseCommaSeparatedSet(requestTypes),
+		requestDecreaseWorkloadClasses: parseCommaSeparatedSet(requestClasses),
+	}
+}
+
+func parseCommaSeparatedSet(raw string) sets.Set[string] {
+	out := sets.New[string]()
+	for _, part := range strings.Split(raw, ",") {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out.Insert(part)
+		}
+	}
+	return out
+}
+
+func (c authoritativeSkipConfig) skipsLimitDecrease(workloadType, workloadClass string) bool {
+	if c.limitDecreaseWorkloadTypes.Has(workloadType) {
+		return true
+	}
+	return workloadClass != "" && c.limitDecreaseWorkloadClasses.Has(workloadClass)
+}
+
+func (c authoritativeSkipConfig) skipsRequestDecrease(workloadType, workloadClass string) bool {
+	if c.requestDecreaseWorkloadTypes.Has(workloadType) {
+		return true
+	}
+	return workloadClass != "" && c.requestDecreaseWorkloadClasses.Has(workloadClass)
+}
+
+func admit(port, healthPort int, certDir string, client buildclientv1.BuildV1Interface, kubeClient kubernetes.Interface, loaders map[string][]*cacheReloader, mutateResourceLimits bool, cpuCap int64, memoryCap string, cpuPriorityScheduling int64, percentageMeasured float64, measuredPodCPUIncrease float64, systemReservedCPU int64, authoritative authoritativeConfig, authoritativeSkip authoritativeSkipConfig, escalations *escalationServer, reporter results.PodScalerReporter) {
 	logger := logrus.WithField("component", "pod-scaler admission")
 	logger.Infof("Initializing admission webhook server with %d loaders.", len(loaders))
 	if authoritative.anyDryRun() {
@@ -86,7 +129,7 @@ func admit(port, healthPort int, certDir string, client buildclientv1.BuildV1Int
 		Port:    port,
 		CertDir: certDir,
 	})
-	server.Register("/pods", &webhook.Admission{Handler: &podMutator{logger: logger, client: client, decoder: decoder, resources: resources, mutateResourceLimits: mutateResourceLimits, cpuCap: cpuCap, memoryCap: memoryCap, cpuPriorityScheduling: cpuPriorityScheduling, percentageMeasured: percentageMeasured, measuredPodCPUIncrease: measuredPodCPUIncrease, nodeCache: nodeCache, authoritative: authoritative, escalations: escalations, reporter: reporter}})
+	server.Register("/pods", &webhook.Admission{Handler: &podMutator{logger: logger, client: client, decoder: decoder, resources: resources, mutateResourceLimits: mutateResourceLimits, cpuCap: cpuCap, memoryCap: memoryCap, cpuPriorityScheduling: cpuPriorityScheduling, percentageMeasured: percentageMeasured, measuredPodCPUIncrease: measuredPodCPUIncrease, nodeCache: nodeCache, authoritative: authoritative, authoritativeSkip: authoritativeSkip, escalations: escalations, reporter: reporter}})
 	logger.Info("Serving admission webhooks.")
 	if err := server.Start(interrupts.Context()); err != nil {
 		logrus.WithError(err).Fatal("Failed to serve webhooks.")
@@ -106,6 +149,7 @@ type podMutator struct {
 	measuredPodCPUIncrease float64
 	nodeCache              *nodeAllocatableCache
 	authoritative          authoritativeConfig
+	authoritativeSkip      authoritativeSkipConfig
 	escalations            *escalationServer
 	reporter               results.PodScalerReporter
 }
@@ -156,7 +200,7 @@ func (m *podMutator) Handle(ctx context.Context, req admission.Request) admissio
 		m.setMeasuredLabel(pod, false, logger)
 	}
 
-	mutatePodResources(pod, m.resources, m.mutateResourceLimits, m.cpuCap, m.memoryCap, isMeasured, m.nodeCache, m.measuredPodCPUIncrease, m.authoritative, m.escalations, m.reporter, logger)
+	mutatePodResources(pod, m.resources, m.mutateResourceLimits, m.cpuCap, m.memoryCap, isMeasured, m.nodeCache, m.measuredPodCPUIncrease, m.authoritative, m.authoritativeSkip, m.escalations, m.reporter, logger)
 	m.addPriorityClass(pod)
 
 	marshaledPod, err := json.Marshal(pod)
@@ -364,7 +408,7 @@ func preventUnschedulableWithCaps(resources *corev1.ResourceRequirements, cpuCap
 	}
 }
 
-func mutatePodResources(pod *corev1.Pod, server *resourceServer, mutateResourceLimits bool, cpuCap int64, memoryCap string, isMeasured bool, nodeCache *nodeAllocatableCache, measuredPodCPUIncrease float64, authoritative authoritativeConfig, escalations *escalationServer, reporter results.PodScalerReporter, logger *logrus.Entry) {
+func mutatePodResources(pod *corev1.Pod, server *resourceServer, mutateResourceLimits bool, cpuCap int64, memoryCap string, isMeasured bool, nodeCache *nodeAllocatableCache, measuredPodCPUIncrease float64, authoritative authoritativeConfig, authoritativeSkip authoritativeSkipConfig, escalations *escalationServer, reporter results.PodScalerReporter, logger *logrus.Entry) {
 	workloadClass := pod.Labels[ciWorkloadLabel]
 
 	mutateResources := func(containers []corev1.Container) {
@@ -421,7 +465,7 @@ func mutatePodResources(pod *corev1.Pod, server *resourceServer, mutateResourceL
 					reconcileLimits(&containers[i].Resources)
 				}
 				applyFailureEscalation(&containers[i].Resources, workloadType, workloadName, escalations, logger)
-				applyAuthoritativeLimitDecrease(&resources, &containers[i].Resources, workloadName, workloadType, isMeasured, workloadClass, authoritative, escalations, logger)
+				applyAuthoritativeLimitDecrease(&resources, &containers[i].Resources, workloadName, workloadType, isMeasured, workloadClass, authoritative, authoritativeSkip, escalations, logger)
 				if mutateResourceLimits && !authoritative.cpuLimit.apply {
 					if containers[i].Resources.Limits != nil {
 						delete(containers[i].Resources.Limits, corev1.ResourceCPU)
@@ -881,7 +925,7 @@ func storeEscalationIndex(cache Cache, index podscaler.EscalationIndex) error {
 	return context.DeadlineExceeded
 }
 
-func applyAuthoritativeLimitDecrease(recommended, configured *corev1.ResourceRequirements, workloadName, workloadType string, isMeasured bool, workloadClass string, authoritative authoritativeConfig, escalations *escalationServer, logger *logrus.Entry) {
+func applyAuthoritativeLimitDecrease(recommended, configured *corev1.ResourceRequirements, workloadName, workloadType string, isMeasured bool, workloadClass string, authoritative authoritativeConfig, authoritativeSkip authoritativeSkipConfig, escalations *escalationServer, logger *logrus.Entry) {
 	if isMeasured {
 		return
 	}
@@ -900,7 +944,10 @@ func applyAuthoritativeLimitDecrease(recommended, configured *corev1.ResourceReq
 			continue
 		}
 		for _, field := range []corev1.ResourceName{corev1.ResourceCPU, corev1.ResourceMemory} {
-			if workloadType == WorkloadTypeBuild && target.resourceType == "limit" {
+			if target.resourceType == "limit" && authoritativeSkip.skipsLimitDecrease(workloadType, workloadClass) {
+				continue
+			}
+			if target.resourceType == "request" && authoritativeSkip.skipsRequestDecrease(workloadType, workloadClass) {
 				continue
 			}
 			if field == corev1.ResourceCPU && cpuLevel > 0 {
