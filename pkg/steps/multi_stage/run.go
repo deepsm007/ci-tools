@@ -30,6 +30,7 @@ func (s *multiStageTestStep) runSteps(
 	env []coreapi.EnvVar,
 	secretVolumes []coreapi.Volume,
 	secretVolumeMounts []coreapi.VolumeMount,
+	interruptCtx context.Context,
 ) error {
 	start := time.Now()
 	logrus.Infof("Running multi-stage phase %s", phase)
@@ -46,7 +47,12 @@ func (s *multiStageTestStep) runSteps(
 			s.flags |= hasPrevErrs
 		}
 	}()
-	if err := s.runPods(ctx, pods, bestEffortSteps); err != nil {
+	if phase == "post" {
+		err = s.runPostPods(ctx, interruptCtx, pods, steps, bestEffortSteps)
+	} else {
+		err = s.runPods(ctx, pods, bestEffortSteps)
+	}
+	if err != nil {
 		errs = append(errs, err)
 	}
 	select {
@@ -79,6 +85,127 @@ func (s *multiStageTestStep) runSteps(
 	logrus.Infof("Step phase %s %s after %s.", phase, verb, duration.Truncate(time.Second))
 
 	return err
+}
+
+// isSoftPostStep reports whether a post step is non-critical (gather/artifacts).
+// Critical post steps (e.g. deprovision) are everything else.
+func isSoftPostStep(step api.LiteralTestStep) bool {
+	return (step.BestEffort != nil && *step.BestEffort) ||
+		(step.OptionalOnSuccess != nil && *step.OptionalOnSuccess)
+}
+
+func softPostStepNames(testName string, steps []api.LiteralTestStep) sets.Set[string] {
+	names := sets.New[string]()
+	for _, step := range steps {
+		if isSoftPostStep(step) {
+			names.Insert(fmt.Sprintf("%s-%s", testName, step.As))
+		}
+	}
+	return names
+}
+
+func filterHardPostPods(pods []coreapi.Pod, softNames sets.Set[string]) []coreapi.Pod {
+	var hard []coreapi.Pod
+	for _, pod := range pods {
+		if !softNames.Has(pod.Name) {
+			hard = append(hard, pod)
+		}
+	}
+	return hard
+}
+
+// runPostPods runs post steps in configured order. Soft steps (best_effort /
+// optional_on_success) stay interruptible and still record junit pass/fail.
+// Critical steps always use postCtx (Background) so timeout / new-push interrupt
+// cannot cancel deprovision. On interrupt, soft steps are cancelled/skipped and
+// remaining critical steps start immediately in the background.
+func (s *multiStageTestStep) runPostPods(
+	postCtx, interruptCtx context.Context,
+	pods []coreapi.Pod,
+	steps []api.LiteralTestStep,
+	bestEffortSteps sets.Set[string],
+) error {
+	softNames := softPostStepNames(s.name, steps)
+
+	hardErrCh := make(chan error, 1)
+	var hardOnce sync.Once
+	startHardFrom := func(from int) {
+		hardOnce.Do(func() {
+			go func() {
+				hard := filterHardPostPods(pods[from:], softNames)
+				if len(hard) == 0 {
+					hardErrCh <- nil
+					return
+				}
+				logrus.Infof("Running %d critical post step(s)", len(hard))
+				hardErrCh <- s.runPods(postCtx, hard, bestEffortSteps)
+			}()
+		})
+	}
+
+	if interruptCtx != nil && interruptCtx.Err() != nil {
+		logrus.Info("Interrupt before post: running critical post steps only")
+		startHardFrom(0)
+		return <-hardErrCh
+	}
+
+	var errs []error
+	for i := 0; i < len(pods); i++ {
+		if interruptCtx != nil && interruptCtx.Err() != nil {
+			for _, pod := range pods[i:] {
+				if softNames.Has(pod.Name) {
+					logrus.Infof("Skipping non-critical post step %s due to interrupt", pod.Name)
+				}
+			}
+			logrus.Info("Interrupt during post: running remaining critical post steps in background")
+			startHardFrom(i)
+			errs = append(errs, <-hardErrCh)
+			return utilerrors.NewAggregate(errs)
+		}
+
+		pod := pods[i]
+		isSoft := softNames.Has(pod.Name)
+		podCtx := postCtx
+		flags := util.WaitForPodFlag(0)
+		var cancel context.CancelFunc
+		done := make(chan struct{})
+		if isSoft && interruptCtx != nil {
+			podCtx, cancel = context.WithCancel(postCtx)
+			go func(p coreapi.Pod, from int) {
+				select {
+				case <-interruptCtx.Done():
+					logrus.Infof("Interrupt: cancelling non-critical post step %s", p.Name)
+					cancel()
+					if err := s.client.Delete(context.Background(), &p); err != nil && !kerrors.IsNotFound(err) {
+						logrus.WithError(err).Warnf("failed to delete non-critical post pod %s", p.Name)
+					}
+					logrus.Info("Interrupt during post: starting critical post steps in background")
+					startHardFrom(from)
+				case <-done:
+				}
+			}(pod, i)
+			flags = util.Interruptible
+		}
+
+		err := s.runPod(podCtx, &pod, base_steps.NewTestCaseNotifier(util.NopNotifier), flags)
+		close(done)
+		if cancel != nil {
+			cancel()
+		}
+		if err == nil {
+			continue
+		}
+		if isSoft && interruptCtx != nil && interruptCtx.Err() != nil {
+			logrus.Infof("Non-critical post step %s ended after interrupt (result recorded)", pod.Name)
+			continue
+		}
+		if bestEffortSteps != nil && bestEffortSteps.Has(pod.Name) {
+			logrus.Infof("Pod %s is running in best-effort mode, ignoring the failure...", pod.Name)
+			continue
+		}
+		errs = append(errs, err)
+	}
+	return utilerrors.NewAggregate(errs)
 }
 
 func (s *multiStageTestStep) runPods(ctx context.Context, pods []coreapi.Pod, bestEffortSteps sets.Set[string]) error {

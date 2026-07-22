@@ -356,14 +356,16 @@ func (s *multiStageTestStep) run(ctx context.Context) error {
 	observerDone := make(chan struct{})
 	go s.runObservers(observerContext, ctx, observers, observerDone)
 	s.flags |= shortCircuit
-	if err := s.runSteps(ctx, "pre", s.pre, env, secretVolumes, secretVolumeMounts); err != nil {
+	if err := s.runSteps(ctx, "pre", s.pre, env, secretVolumes, secretVolumeMounts, nil); err != nil {
 		errs = append(errs, fmt.Errorf("%q pre steps failed: %w", s.name, err))
-	} else if err := s.runSteps(ctx, "test", s.test, env, secretVolumes, secretVolumeMounts); err != nil {
+	} else if err := s.runSteps(ctx, "test", s.test, env, secretVolumes, secretVolumeMounts, nil); err != nil {
 		errs = append(errs, fmt.Errorf("%q test steps failed: %w", s.name, err))
 	}
 	s.cancelObserversContext(cancel) // signal to observers that we're tearing down
 	s.flags &= ^shortCircuit
-	if err := s.runSteps(context.Background(), "post", s.post, env, secretVolumes, secretVolumeMounts); err != nil {
+	// Post uses Background so critical cleanup is not cancelled by job interrupt
+	// (timeout / new push). Soft post steps still see interruptCtx.
+	if err := s.runSteps(context.Background(), "post", s.post, env, secretVolumes, secretVolumeMounts, ctx); err != nil {
 		errs = append(errs, fmt.Errorf("%q post steps failed: %w", s.name, err))
 	}
 	<-observerDone // wait for the observers to finish so we get their jUnit
