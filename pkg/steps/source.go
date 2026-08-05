@@ -436,7 +436,7 @@ func handleFailedBuild(ctx context.Context, client BuildClient, ns, name string,
 		return err
 	}
 
-	if !(isInfraReason(b.Status.Reason) || hintsAtInfraReason(b.Status.LogSnippet)) {
+	if !(isInfraReason(b.Status.Reason) || hintsAtInfraReason(b.Status.LogSnippet) || hintsAtInfraReasonFromBuildLogs(client, ns, name, b.Status.Reason)) {
 		logrus.Debugf("Build %q (created at %v) classified as legitimate failure, will not be retried", name, b.CreationTimestamp)
 		return err
 	}
@@ -660,6 +660,22 @@ func hintsAtInfraReason(logSnippet string) bool {
 		strings.Contains(logSnippet, "net/http: TLS handshake timeout") ||
 		strings.Contains(logSnippet, "All mirrors were tried") ||
 		strings.Contains(logSnippet, "connection reset by peer")
+}
+
+func hintsAtInfraReasonFromBuildLogs(client BuildClient, namespace, name string, reason buildapi.StatusReason) bool {
+	if reason != buildapi.StatusReasonDockerBuildFailed {
+		return false
+	}
+	s, err := client.Logs(namespace, name, &buildapi.BuildLogOptions{NoWait: true})
+	if err != nil {
+		return false
+	}
+	defer s.Close()
+	log, err := io.ReadAll(s)
+	if err != nil {
+		return false
+	}
+	return hintsAtInfraReason(string(log))
 }
 
 func waitForBuildOrTimeout(

@@ -906,3 +906,40 @@ func fakeInvolvedObjectUIDEventIndex(object client.Object) []string {
 	}
 	return []string{string(p.InvolvedObject.UID)}
 }
+
+func TestHintsAtInfraReasonFromBuildLogs(t *testing.T) {
+	testCases := []struct {
+		name     string
+		reason   buildapi.StatusReason
+		log      string
+		expected bool
+	}{
+		{
+			name:     "docker build with DNS failure in full log",
+			reason:   buildapi.StatusReasonDockerBuildFailed,
+			log:      "curl: (6) Could not resolve host: mirror.openshift.com\nerror: build error: exit status 6",
+			expected: true,
+		},
+		{
+			name:     "docker build with legitimate failure",
+			reason:   buildapi.StatusReasonDockerBuildFailed,
+			log:      "make: *** Error 2\nerror: build error: exit status 2",
+			expected: false,
+		},
+		{
+			name:     "non-docker reason ignored",
+			reason:   buildapi.StatusReasonPostCommitHookFailed,
+			log:      "Could not resolve host: mirror.openshift.com",
+			expected: false,
+		},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			client := NewFakeBuildClient(loggingclient.New(fakectrlruntimeclient.NewClientBuilder().Build(), nil), testCase.log)
+			actual := hintsAtInfraReasonFromBuildLogs(client, "ns", "name", testCase.reason)
+			if diff := cmp.Diff(testCase.expected, actual); diff != "" {
+				t.Errorf("%s: mismatch (-expected +actual):\n%s", testCase.name, diff)
+			}
+		})
+	}
+}
