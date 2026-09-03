@@ -42,10 +42,14 @@ function prow_module_line_peer() {
 	local branch="${PULL_BASE_REF:-main}"
 
 	if [[ -f "${sibling_dir}/go.mod" ]]; then
-		prow_module_line_from_dir "${sibling_dir}"
-	else
-		prow_module_line_from_github "${orgrepo}" "${branch}"
+		local line=""
+		if line="$( prow_module_line_from_dir "${sibling_dir}" 2>/dev/null )"; then
+			echo "${line}"
+			return 0
+		fi
+		echo "[WARN] sibling ${sibling_dir} go list failed; using ${orgrepo}@${branch} go.mod" >&2
 	fi
+	prow_module_line_from_github "${orgrepo}" "${branch}"
 }
 
 ci_tools_version="$( prow_module_line_from_dir . )"
